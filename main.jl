@@ -5,7 +5,7 @@ import DataStructures: counter
 using Memoize
 using Base
 using ProgressMeter 
-# import Base : @kwdef
+# using AutoHashEquals
 
 #=-------------------------------------------------------------
 CONSTS, UTILS
@@ -33,7 +33,7 @@ end
 #=-------------------------------------------------------------
 DieVals
 -------------------------------------------------------------=#
-Base.@kwdef mutable struct DieVals <: AbstractArray{DieVal, 1} #TODO must be immutable to live on the stack in Julia
+mutable struct DieVals <: AbstractArray{DieVal, 1} #TODO must be immutable to live on the stack in Julia
     data::u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes total, each taking 3 bits
 end
 
@@ -75,6 +75,10 @@ DieValsID
 struct DieValsID <: AbstractArray{DieVal, 1}
     data::u8 # all 252 sorted dievals combos fit inside 8 bits 
 end
+
+Base.hash(self::DieValsID, h::UInt) = hash(self.data)
+
+Base.isequal(self::DieValsID, other::DieValsID) = isequal(self.data, other.data)
 
 DieVals(from::DieValsID) = DIEVALS_FOR_DIEVALS_ID[from.data] # note this is constructor for DIEVALS
 
@@ -118,8 +122,9 @@ SortedSlots(v::Vector{Slot}) = let
     return retval 
 end
 
-contains(self::SortedSlots, i::Slot) ::Bool = (self.data & (1<<u16(i)) > 0)
-contains(self::SortedSlots, i::Int) ::Bool = (self.data & (1<<u16(i)) > 0)
+Base.hash(self::SortedSlots, h::UInt) = hash(self.data)
+
+Base.isequal(self::SortedSlots, other::SortedSlots) = isequal(self.data, other.data)
 
 Base.iterate(self::SortedSlots, state=0) = let 
     while state < 13 
@@ -137,6 +142,21 @@ Base.size(self::SortedSlots) = (count_ones(self.data),)
 
 Base.copy(self::SortedSlots) = SortedSlots(self.data)
 
+Base.getindex(self::SortedSlots, i::Int)::Slot= let
+    @assert(i<=length(self))
+    temp = copy(self)
+    idx=0
+    for j in 1:i  
+        idx = trailing_zeros(temp.data)
+        remove!(temp,Slot(idx))
+    end
+    return Slot(idx)
+end
+
+contains(self::SortedSlots, i::Slot) ::Bool = (self.data & (1<<u16(i)) > 0)
+
+contains(self::SortedSlots, i::Int) ::Bool = (self.data & (1<<u16(i)) > 0)
+
 insert!(self::SortedSlots, slots ::Slot... ) = let
     for slot in slots
         mask = 1 << u16(slot)
@@ -149,17 +169,6 @@ remove!(self::SortedSlots, slots ::Slot... ) = let
         mask = ~( 1 << u16(slot) )
         self.data &= mask # force off
     end
-end
-
-Base.getindex(self::SortedSlots, i::Int)::Slot= let
-    @assert(i<=length(self))
-    temp = copy(self)
-    idx=0
-    for j in 1:i  
-        idx = trailing_zeros(temp.data)
-        remove!(temp,Slot(idx))
-    end
-    return Slot(idx)
 end
 
 # Base.getindex(self::SortedSlots, i::Int)::Bool = contains(self,i) 
@@ -237,14 +246,31 @@ GameState
 -------------------------------------------------------------=#
 
 Base.@kwdef struct GameState # TODO test impact of calling keyword funcs are bad for performance https://techytok.com/code-optimisation-in-julia/#keyword-arguments 
-    dievals_id ::DieValsID # = DieValsID(0,0,0,0,0)# 3bits per die unsorted =15 bits minimally ... 8bits if combo is stored sorted (252 possibilities)
-    sorted_open_slots ::SortedSlots # =SortedSlots(Slot[]) #  13 bits " 4 bits for a single slot 
-    upper_total ::u8 = 0#  6 bits " 
-    rolls_remaining ::u8 = 3 #  3 bits "
-    yahtzee_bonus_avail ::Bool = false#  1 bit "
-end #~500k for leafcalcs
+    dievals_id ::DieValsID 
+    sorted_open_slots ::SortedSlots 
+    upper_total ::u8 = 0
+    rolls_remaining ::u8 = 3 
+    yahtzee_bonus_avail ::Bool = false
+end 
 
-#     /// calculate relevant counts for gamestate: required lookups and saves
+Base.hash(self::GameState, h::UInt) = 
+    hash(
+        self.dievals_id, hash(
+            self.sorted_open_slots, hash(
+                self.upper_total, hash(
+                    self.rolls_remaining, hash(
+                        self.yahtzee_bonus_avail
+    )))))
+
+Base.isequal(self::GameState, other::GameState) = 
+    isequal(self.dievals_id, other.dievals_id) && 
+    isequal(self.sorted_open_slots, other.sorted_open_slots) && 
+    isequal(self.upper_total, other.upper_total) && 
+    isequal(self.rolls_remaining, other.rolls_remaining) && 
+    isequal(self.yahtzee_bonus_avail, other.yahtzee_bonus_avail) 
+
+ 
+# calculate relevant counts for gamestate: required lookups and saves
 counts(self::GameState) :: Tuple{Int,Int} = let 
     lookups = 0 
     saves = 0 
@@ -305,20 +331,6 @@ print_state_choice(state ::GameState, choice_ev ::ChoiceEV) = let
         #     state.yahtzee_bonus_avail ? "Y" : "", state.sorted_open_slots, choice_ev.ev) 
     end 
 end 
-
-output_state_choice(self::App, state ::GameState, choice_ev ::ChoiceEV) = let 
-    # # Uncomment below for more verbose progress output at the expense of speed 
-    # if state.rolls_remaining==0 
-    #     self.bar.println(format!("S\t{: >6.2?}\t{:_^5}\t{:2?}\t{}\t{:2?}\t{}\t{: <29}",
-    #         choice_ev.ev, choice_ev.choice, state.rolls_remaining, state.sorted_dievals, state.upper_total, 
-    #         if state.yahtzee_bonus_avail {"Y"}else{""}, state.sorted_open_slots.to_string())); 
-    # else
-    #     self.bar.println(format!("D\t{: >6.2?}\t{:05b}\t{:2?}\t{}\t{:2?}\t{}\t{: <29}",
-    #         choice_ev.ev, choice_ev.choice, state.rolls_remaining, state.sorted_dievals, state.upper_total, 
-    #         if state.yahtzee_bonus_avail {"Y"}else{""}, state.sorted_open_slots.to_string())); 
-    # end 
-end 
-
 
 
 #=-------------------------------------------------------------
@@ -410,6 +422,13 @@ function App(game::GameState)
     sizehint!(ev_cache,saves)
     return App(game, ev_cache, bar)
 end 
+
+output_state_choice(self ::App, state ::GameState, choice_ev ::ChoiceEV) = let 
+    # Uncomment below for more verbose progress output at the expense of speed 
+    # println(state, choice_ev) #.printed(state, choice_ev)
+end 
+
+
 
 #=-------------------------------------------------------------
 BUILD_CACHE
