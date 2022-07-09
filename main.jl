@@ -5,7 +5,6 @@ import DataStructures: counter
 using Memoize
 using Base
 using ProgressMeter 
-# using AutoHashEquals
 
 #=-------------------------------------------------------------
 CONSTS, UTILS
@@ -33,7 +32,7 @@ end
 #=-------------------------------------------------------------
 DieVals
 -------------------------------------------------------------=#
-mutable struct DieVals <: AbstractArray{DieVal, 1} #TODO must be immutable to live on the stack in Julia
+mutable struct DieVals <: AbstractArray{DieVal, 1} #TODO make immutable to live on the stack in Julia
     data::u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes total, each taking 3 bits
 end
 
@@ -41,16 +40,16 @@ end
 
 DieVals() = DieVals(0) 
  
-DieVals(from ::Vector{T} ) where {T<:Integer} = let
+DieVals(from ::Vector{T} ) where {T} = let
     DieVals(from...)
 end
 
-DieVals(d1::T, d2::T, d3::T, d4::T, d5::T) where {T<:Integer} = let 
+DieVals(d1::T, d2::T, d3::T, d4::T, d5::T) where {T} = let 
     DieVals(u16(d5) << 12 | u16(d4) << 9 | u16(d3) << 6 | u16(d2) << 3 | u16(d1))
 end
 
 # blit the 'from' dievals into the 'self' dievals with the help of a mask where 0 indicates incoming 'from' bits and 1 indicates none incoming 
-blit!(self::DieVals, from::DieVals, mask::DieVals,) = 
+blit!(self::DieVals, from::DieVals, mask::DieVals,) = # TODO make this into "blitted!" so DieVals can be immutable and live on the stack
     self.data = (self.data & mask.data) | from.data 
 
 Base.copy(self::DieVals) = DieVals(self.data)
@@ -61,65 +60,30 @@ Base.size(self::DieVals) = return (5,)
 
 Base.length(self::DieVals) = return 5 
 
-Base.getindex(self::DieVals, i::Int) ::DieVal = ((self.data >> ((i-1)*3)) & 0b111) 
+Base.getindex(self::DieVals, i) ::DieVal = ((self.data >> ((i-1)*3)) & 0b111) 
 
-Base.setindex!(self::DieVals, val::DieVal, i::Int) = let 
+Base.setindex!(self::DieVals, val::DieVal, i) = let #TODO removable for immutable DieVals? 
     bitpos = 3*(i-1) # widths of 3 bits per value
     mask = ~(UInt16(0b111) << bitpos) # hole maker
     self.data = (self.data & mask) | ( UInt16(val) << bitpos ) #  #  punch & fill hole
 end
 
-# #=-------------------------------------------------------------
-# DieValsID
-# -------------------------------------------------------------=#
-# struct DieValsID <: AbstractArray{DieVal, 1}
-#     data::u8 # all 252 sorted dievals combos fit inside 8 bits 
-# end
-
-# Base.hash(self::DieValsID, h::UInt) = hash(self.data)
-
-# Base.isequal(self::DieValsID, other::DieValsID) = isequal(self.data, other.data)
-
-# DieVals(from::DieValsID) = DIEVALS_FOR_DIEVALS_ID[from.data] # note this is constructor for DIEVALS
-
-# DieValsID(d1::T, d2::T, d3::T, d4::T, d5::T)  where {T<:Number}  = let 
-#     it = DieVals(d1,d2,d3,d4,d5)
-#     DIEVALS_ID_FOR_DIEVALS[it.data] 
-# end
-
-# DieValsID(from::Vector{DieVal}) ::DieValsID = let 
-#     it = DieVals(from)
-#     DIEVALS_ID_FOR_DIEVALS[it.data+1]  # +1 offset needed because 0 isn't a valid index in Julia :/   TODO something better for performance? 
-# end                                    # TODO maybe just dispense with DieValsID altogether since it can't speed things up and is meaning-opaque in storage
-
-# DieValsID(from::DieVals) ::DieValsID = let 
-#     DIEVALS_ID_FOR_DIEVALS[from.data+1] 
-# end
-
-# # convert(::Type{SortedDieVals}, from::DieVals) = SORTED_DIEVALS_FOR_UNSORTED[from.data]  ## TODO avoid implicit conversion for now
-# # convert(::Type{DieVals}, from::SortedDieVals) = INDEXED_DIEVALS_SORTED[from.data]
-# Base.IndexStyle(::Type{<:DieValsID}) = IndexLinear()
-
-# Base.size(self::DieValsID) = return (5,)
-
-# Base.length(self::DieValsID) = return 5 
-
-# Base.getindex(self::DieValsID, i::Int) ::DieVal = DieVals(self)[i] 
-
 #=-------------------------------------------------------------
 SortedSlots
 -------------------------------------------------------------=#
-mutable struct SortedSlots <: AbstractArray{Slot, 1} #TODO can we make this immutable for stack allocation in Julia?
-    data::UInt16 # 13 sorted Slots can be positionally encoded in one u16
+struct SortedSlots <: AbstractArray{Slot, 1} 
+    data::u16 # 13 sorted Slots can be positionally encoded in one u16
 end
 
-# SortedSlots(v::Vector{Any}) = SortedSlots(Slot[collect(v)...])
- 
-SortedSlots(v::Vector{Slot}) = let 
-    @assert(length(v) <= 13)
-    retval = SortedSlots(0)
-    [insert!(retval, x) for x in v] # TODO faster w for loop?
-    return retval 
+SortedSlots(iterable) = let 
+    # @assert(length(v) <= 13)
+    data::u16 = 0
+    for slot in iterable 
+        mask = 1 << u16(slot)
+        data |= mask # force on
+    end
+    # for x in iterable; insert!(retval, x); end  
+    return SortedSlots(data) 
 end
 
 Base.hash(self::SortedSlots, h::UInt) = hash(self.data)
@@ -142,34 +106,32 @@ Base.size(self::SortedSlots) = (count_ones(self.data),)
 
 Base.copy(self::SortedSlots) = SortedSlots(self.data)
 
-Base.getindex(self::SortedSlots, i::Int)::Slot= let
-    @assert(i<=length(self))
-    temp = copy(self)
-    idx=0
-    for j in 1:i  
-        idx = trailing_zeros(temp.data)
-        remove!(temp,Slot(idx))
+Base.getindex(self::SortedSlots, i)::Slot= let
+    # @assert(i<=length(self))
+    bits = self.data
+    bit_index=0
+    for _ in 1:i  
+        bit_index = trailing_zeros(bits)
+        bits &= ~( 1 << u16(bit_index) )  #unset bit
     end
-    return Slot(idx)
+    return Slot(bit_index)
 end
 
-contains(self::SortedSlots, i::Slot) ::Bool = (self.data & (1<<u16(i)) > 0)
+contains(self::SortedSlots, i) ::Bool = (self.data & (1<<u16(i)) > 0)
 
-contains(self::SortedSlots, i::Int) ::Bool = (self.data & (1<<u16(i)) > 0)
+# insert!(self::SortedSlots, slots... ) = let
+#     for slot in slots
+#         mask = 1 << u16(slot)
+#         self.data |= mask # force on
+#     end
+# end
 
-insert!(self::SortedSlots, slots ::Slot... ) = let
-    for slot in slots
-        mask = 1 << u16(slot)
-        self.data |= mask # force on
-    end
-end
-
-remove!(self::SortedSlots, slots ::Slot... ) = let
-    for slot in slots
-        mask = ~( 1 << u16(slot) )
-        self.data &= mask # force off
-    end
-end
+# remove!(self::SortedSlots, slots... ) = let
+#     for slot in slots
+#         mask = ~( 1 << u16(slot) )
+#         self.data &= mask # force off
+#     end
+# end
 
 # Base.getindex(self::SortedSlots, i::Int)::Bool = contains(self,i) 
 
@@ -271,7 +233,7 @@ Base.isequal(self::GameState, other::GameState) =
 
  
 # calculate relevant counts for gamestate: required lookups and saves
-counts(self::GameState) :: Tuple{Int,Int} = let 
+counts(self::GameState) :: Tuple{UInt,UInt} = let 
     lookups = 0 
     saves = 0 
     for subset_len in 1:length(self.sorted_open_slots)
@@ -338,7 +300,11 @@ SCORING FNs
 -------------------------------------------------------------=#
 
 score_upperbox(boxnum::Slot, sorted_dievals::DieVals) ::u8 = let #TODO rename SortedDieVals to DieValsID to avoid ambiguitiy in signatures like this one 
-    filter(x->x==boxnum, sorted_dievals) |> sum # TODO could be faster with short-circuiting since dievals is sorted
+    sum::u8 = 0
+    for d in sorted_dievals
+        if d==boxnum sum+=boxnum end
+    end
+    return sum 
 end 
 
 score_n_of_a_kind(n::u8, sorted_dievals::DieVals) ::u8 = let 
@@ -368,7 +334,7 @@ straight_len(sorted_dievals::DieVals) ::u8 = let
     maxinarow 
 end
 
-score_aces(sorted_dievals::       DieVals) ::u8         = score_upperbox(0x1,sorted_dievals)   #TODO reduce indirction by placing score_upper et all direct in arry?
+score_aces(sorted_dievals::       DieVals) ::u8         = score_upperbox(0x1,sorted_dievals)   
 score_twos(sorted_dievals::       DieVals) ::u8         = score_upperbox(0x2,sorted_dievals) 
 score_threes(sorted_dievals::     DieVals) ::u8         = score_upperbox(0x3,sorted_dievals) 
 score_fours(sorted_dievals::      DieVals) ::u8         = score_upperbox(0x4,sorted_dievals) 
@@ -647,7 +613,7 @@ INITIALIZERS
 #     return arr
 # end
 
-sorted_dievals() ::Dict{DieVals} = let # TODO this could return a sparse array of only 2^5 = 32,768 elements for faster lookups 
+sorted_dievals() ::Dict{DieVals} = let # TODO this could return a sparse array of only 2^5 = 32,768 u16s for faster lookups 
     dict = Dict{DieVals,DieVals}()
     sizehint!(dict,28087) 
     dict[DieVals(0)] = DieVals(0) # first one is for the special wildcard 
@@ -662,12 +628,12 @@ end
 
 # count of arrangements that can be formed from r selections, chosen from n items, 
 # where order DOES or DOESNT matter, and WITH or WITHOUT replacement, as specified.
-n_take_r(n::Int, r::Int, order_matters::Bool, with_replacement::Bool) = let
+n_take_r(n, r, order_matters::Bool, with_replacement::Bool) ::UInt = let
     if order_matters  #  order matters; we're counting "permutations" 
         if with_replacement 
             n^r
         else #  no replacement
-            factorial(n) / factorial(n-r)  #  this = factorial(n] when r=n
+            factorial(n) / factorial(n-r)  #  this = factorial(n) when r=n
         end 
     else #  we're counting "combinations" where order doesn't matter; there are less of these 
         if with_replacement 
@@ -680,13 +646,13 @@ end
 
 
 # this generates the ranges that correspond to the outcomes, within the set of all outcomes, indexed by a give selection """
-selection_ranges() ::Vector{UnitRange{Int}} = let  #todo check for 0-based to 1-based of by one errors
-    sel_ranges=Vector{UnitRange{Int}}(undef,32)
+selection_ranges() ::Vector{UnitRange{UInt}} = let  #todo check for 0-based to 1-based of by one errors
+    sel_ranges=Vector{UnitRange{UInt}}(undef,32)
     s = 1
     sel_ranges[1] = 1:1 #TODO redundant?
     combos = die_index_combos()
     for (i,combo) in enumerate(combos)
-        count = Int(n_take_r(6, length(combo), false, true))
+        count = n_take_r(6, length(combo), false, true)
         sel_ranges[i] = s:(s+count-1)
         s += count
     end 
@@ -718,18 +684,9 @@ end
 # the set of all ways to roll different dice, as represented by a collection of index arrays """
 die_index_combos() = let #->[Vec<u8>;32]  { 
     return powerset(1:5)
-    # them=[Vector{Int}() for _ in 1:32]
-    # i=1
-    # for n in 1:5 
-    #     for combo_vec in combinations(1:5, n) # changed from 0:4 in 0-based Python
-    #         i+=1
-    #         them[i]= combo_vec 
-    #     end 
-    # end 
-    # return them
 end
 
-distinct_arrangements_for(dieval_vec::Vector) ::u8 = let #(dieval_vec:Vec<DieVal>)->u8{
+distinct_arrangements_for(dieval_vec) ::u8 = let #(dieval_vec:Vec<DieVal>)->u8{
     counts = counter(dieval_vec)
     divisor=1
     non_zero_dievals=0
@@ -742,7 +699,6 @@ distinct_arrangements_for(dieval_vec::Vector) ::u8 = let #(dieval_vec:Vec<DieVal
     factorial(non_zero_dievals)
 end 
 
-
 # returns a slice from the precomputed dice roll outcomes that corresponds to the given selection bitfield """
 outcomes_for_selection(selection::Selection) = let #(selection:u8)->&'static [Outcome]{
     one_based_idx = selection + 1 # selection bitfield is 0 to 31 but Julia indexes are from 1 to 32
@@ -751,25 +707,22 @@ outcomes_for_selection(selection::Selection) = let #(selection:u8)->&'static [Ou
     OUTCOMES[range]
 end
 
-function main() 
-    game = GameState(
-        sorted_dievals = DieVals(3,4,4,6,6),
-        # sorted_open_slots = SortedSlots([SIXES,YAHTZEE]),
-        sorted_open_slots = SortedSlots([FULL_HOUSE,CHANCE]),
-        rolls_remaining = 2, 
-    )
-    app = App(game)
-    build_cache!(app)
-    lhs = app.ev_cache[game]
-    println("$lhs")
-    @assert(round(lhs.ev,digits=2) == 20.73)
-end
-
 SELECTION_RANGES = selection_ranges()  
 OUTCOMES = all_selection_outcomes()
 SORTED_DIEVALS = sorted_dievals()
-# DIEVALS_ID_FOR_DIEVALS = dievals_id_for_dievals() #the compact (sorted) dieval id for every (unsorted?) 5-dieval-permutation-with-repetition
-# DIEVALS_FOR_DIEVALS_ID = dievals_for_dieval_id()
 const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # TODO corrected in light of Julia 1-based arrays
-#                         [0,1,2,3,4,7,6,16,8, 9,10,17,11,13,19,26,5,12,18,20,14,21,22,23,15,25,24,27,28,29,30,31]
+
+function main() 
+    game = GameState( 
+        rolls_remaining= 2,
+        sorted_dievals= DieVals(3,4,4,6,6),
+        sorted_open_slots= SortedSlots([6,12]), 
+    )
+    app = App(game)
+    build_cache!(app)
+    lhs=app.ev_cache[game]
+    println("$lhs")
+    # @assert(round(lhs.ev,digits=2) == 20.73)
+end
+
 main()
