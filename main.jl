@@ -409,8 +409,8 @@ BUILD_CACHE
 
 # gather up expected values in a multithreaded bottom-up fashion. this is like.. the main thing
 function build_cache!(self::App) # = let 
-    all_die_combos=outcomes_for_selection(0b11111)
-    placeholder_outcome = OUTCOMES[1] 
+    all_dieval_combos=[o.dievals for o in outcomes_for_selection(0b11111)] # TODO backport this depature to python/rust?
+    placeholder_dievals = DieVals(0) 
 
     # first handle special case of the most leafy leaf calcs -- where there's one slot left and no rolls remaining
     for single_slot in self.game.sorted_open_slots   
@@ -418,10 +418,10 @@ function build_cache!(self::App) # = let
         joker_rules_in_play = single_slot!=YAHTZEE # joker rules in effect when the yahtzee slot is not open 
         for yahtzee_bonus_available in unique([false, joker_rules_in_play])  # yahtzee bonus -might- be available when joker rules are in play 
             for upper_total in relevant_upper_totals(slot)
-                for outcome in all_die_combos
+                for dieval_combo in all_dieval_combos
                     state = GameState(
                         rolls_remaining = 0, 
-                        sorted_dievals = outcome.dievals, 
+                        sorted_dievals = dieval_combo, 
                         sorted_open_slots = slot, 
                         upper_total = upper_total, 
                         yahtzee_bonus_avail = yahtzee_bonus_available
@@ -452,12 +452,12 @@ function build_cache!(self::App) # = let
                     # for each rolls remaining
                     for rolls_remaining in 0:3  
 
-                        die_combos = ifelse(rolls_remaining==3 , [placeholder_outcome] , all_die_combos)
+                        dieval_combos = ifelse(rolls_remaining==3 , [placeholder_dievals] , all_dieval_combos)
 
                         # let built_from_threads = die_combos.into_par_iter().fold(YahtCache::default, |mut built_this_thread, die_combo|{  
                         # built_this_thread = YahtCache() #self.ev_cache #TODO come back to make this actually multithreaded like commented rust code above
 
-                        for die_combo in die_combos
+                        for dieval_combo in dieval_combos
 
                             if rolls_remaining==0  
 
@@ -468,14 +468,14 @@ function build_cache!(self::App) # = let
                                 for slot in slots 
 
                                     #joker rules say extra yahtzees must be played in their matching upper slot if it's available
-                                    first_dieval = die_combo.dievals[1]
-                                    joker_rules_matter = joker_rules_in_play && score_yahtzee(die_combo.dievals)>0 && contains(slots,first_dieval)
+                                    first_dieval = dieval_combo[1]
+                                    joker_rules_matter = joker_rules_in_play && score_yahtzee(dieval_combo)>0 && contains(slots,first_dieval)
                                     head_slot::Slot = ifelse(joker_rules_matter , first_dieval , slot)
                                     head = SortedSlots([head_slot])
 
                                     yahtzee_bonus_avail_now = yahtzee_bonus_available
                                     upper_total_now = upper_total
-                                    dievals_or_placeholder = die_combo.dievals 
+                                    dievals_or_placeholder = dieval_combo
                                     if slots_len > 1 # make the tail all but the head, or else just the head 
                                         headless = [s for s in slots if s != head_slot]
                                         tail = SortedSlots(headless) 
@@ -489,7 +489,7 @@ function build_cache!(self::App) # = let
                                     rolls_remaining_now = 0
                                     for slots_piece in unique([head,tail])
                                         upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0)# only relevant totals are cached
-                                        state = GameState(
+                                        state_to_get = GameState(
                                             sorted_dievals = dievals_or_placeholder,
                                             sorted_open_slots= slots_piece, 
                                             upper_total= upper_total_now, 
@@ -497,7 +497,7 @@ function build_cache!(self::App) # = let
                                             yahtzee_bonus_avail= yahtzee_bonus_avail_now,
                                         )
                                         # cache = ifelse(slots_piece==head , leaf_cache , self.ev_cache) #TODO why need leaf_cache separate from main? how is this shared state read from multi threads??
-                                        choice_ev = self.ev_cache[state]
+                                        choice_ev = self.ev_cache[state_to_get]
                                         if slots_piece==head  # on the first pass only.. 
                                             #going into tail slots next, we may need to adjust the state based on the head choice
                                             if choice_ev.choice <= SIXES  # adjust upper total for the next pass 
@@ -507,26 +507,26 @@ function build_cache!(self::App) # = let
                                                 if choice_ev.ev>0.0 yahtzee_bonus_avail_now=true end
                                             end 
                                             rolls_remaining_now=3 # for upcoming tail lookup, we always want the ev for 3 rolls remaining
-                                            dievals_or_placeholder= DieVals(0) # for 3 rolls remaining, use "wildcard" representative dievals since dice don't matter when rolling all of them
+                                            dievals_or_placeholder= placeholder_dievals # for 3 rolls remaining, use "wildcard" representative dievals since dice don't matter when rolling all of them
                                         end 
                                         head_plus_tail_ev += choice_ev.ev
                                     end #for slot_piece
-                                    if head_plus_tail_ev >= slot_choice_ev.ev 
+                                    if head_plus_tail_ev >= slot_choice_ev.ev #TODO optimize with > instead of >= 
                                         slot_choice_ev = ChoiceEV(slot, head_plus_tail_ev)
                                     end
                                     
                                     if joker_rules_matter break end # if joker-rules-matter we were forced to choose one slot, so we can skip trying the rest  
                                 end  
                                 
-                                state = GameState(
-                                    sorted_dievals = die_combo.dievals,
+                                state_to_set = GameState(
+                                    sorted_dievals = dieval_combo,
                                     sorted_open_slots = slots,
                                     rolls_remaining = 0, 
                                     upper_total =upper_total, 
                                     yahtzee_bonus_avail = yahtzee_bonus_available,
                                 ) 
-                                self.ev_cache[state] = slot_choice_ev
-                                output_state_choice(self, state, slot_choice_ev)
+                                self.ev_cache[state_to_set] = slot_choice_ev
+                                output_state_choice(self, state_to_set, slot_choice_ev)
 
                             else #if rolls_remaining > 0  
 
@@ -537,42 +537,37 @@ function build_cache!(self::App) # = let
                                 selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
                                 for selection in selections  # we'll try each selection against this starting dice combo  
                                     total_ev_for_selection = 0.0 
-                                    outcomes_count = 0 
-                                    for roll_outcome in outcomes_for_selection(selection) 
-                                        newvals = copy(die_combo.dievals)
+                                    outcomes_arrangements_count = 0 
+                                    outcomes = outcomes_for_selection(selection) 
+                                    for roll_outcome in outcomes
+                                        newvals = copy(dieval_combo)
                                         blit!(newvals, roll_outcome.dievals, roll_outcome.mask)
                                         # newvals = sorted[&newvals]; 
-                                        state = GameState(
+                                        state_to_get = GameState(
                                             sorted_dievals= SORTED_DIEVALS[newvals], 
                                             sorted_open_slots= slots, 
                                             upper_total= upper_total, 
                                             rolls_remaining= next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
                                             yahtzee_bonus_avail= yahtzee_bonus_available, 
                                         )
-                                        ev_for_this_selection_outcome = 0. 
-                                        try 
-                                            ev_for_this_selection_outcome = self.ev_cache[state].ev 
-                                        catch
-                                            println(self.ev_cache)
-                                            throw(Base.throw_code_point_err)
-                                        end
+                                        ev_for_this_selection_outcome = self.ev_cache[state_to_get].ev 
                                         total_ev_for_selection += ev_for_this_selection_outcome * roll_outcome.arrangements # bake into upcoming average
-                                        outcomes_count += roll_outcome.arrangements # we loop through die "combos" but we'll average all "perumtations"
+                                        outcomes_arrangements_count += roll_outcome.arrangements # we loop through die "combos" but we'll average all "perumtations"
                                     end  
-                                    avg_ev_for_selection = total_ev_for_selection / outcomes_count
+                                    avg_ev_for_selection = total_ev_for_selection / outcomes_arrangements_count
                                     if avg_ev_for_selection > best_dice_choice_ev.ev
                                         best_dice_choice_ev = ChoiceEV(selection, avg_ev_for_selection)
                                     end 
                                 end 
-                                state = GameState(
-                                        sorted_dievals = die_combo.dievals,
-                                        sorted_open_slots = slots, 
-                                        upper_total =upper_total, 
-                                        yahtzee_bonus_avail = yahtzee_bonus_available, 
-                                        rolls_remaining = rolls_remaining, 
+                                state_to_set = GameState(
+                                    sorted_dievals = dieval_combo,
+                                    sorted_open_slots = slots, 
+                                    upper_total =upper_total, 
+                                    yahtzee_bonus_avail = yahtzee_bonus_available, 
+                                    rolls_remaining = rolls_remaining, 
                                 ) 
-                                output_state_choice(self, state, best_dice_choice_ev)
-                                self.ev_cache[state]=best_dice_choice_ev
+                                output_state_choice(self, state_to_set, best_dice_choice_ev)
+                                self.ev_cache[state_to_set]=best_dice_choice_ev
 
                             end # if rolls_remaining...  
 
@@ -653,7 +648,7 @@ end
 
 
 # this generates the ranges that correspond to the outcomes, within the set of all outcomes, indexed by a give selection """
-selection_ranges() ::Vector{UnitRange{Int}} = let  #todo check for 0-based to 1-based of by one errors
+selection_ranges() ::Vector{UnitRange{Int}} = let  
     sel_ranges=Vector{UnitRange{Int}}(undef,32)
     s = 1
     sel_ranges[1] = 1:1 #TODO redundant?
@@ -689,16 +684,16 @@ all_selection_outcomes() ::Vector{Outcome} = let
 end 
 
 distinct_arrangements_for(dieval_vec) ::u8 = let #(dieval_vec:Vec<DieVal>)->u8{
-    counts = counter(dieval_vec)
+    key_count = counter(dieval_vec)
     divisor=1
     non_zero_dievals=0
-    for count in counts  
-        if count[1] != 0  
-            divisor *= factorial(count[2])
-            non_zero_dievals += count[2]
+    for (key, count) in key_count  
+        if key != 0  
+            divisor *= factorial(count)
+            non_zero_dievals += count
         end  
     end  
-    factorial(non_zero_dievals)
+    factorial(non_zero_dievals) / divisor
 end 
 
 # returns a slice from the precomputed dice roll outcomes that corresponds to the given selection bitfield """
@@ -712,30 +707,32 @@ end
 SELECTION_RANGES = selection_ranges()  
 OUTCOMES = all_selection_outcomes()
 SORTED_DIEVALS = sorted_dievals()
-const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # TODO corrected in light of Julia 1-based arrays
+const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13,19,15,21,24,28,16,22,25,29,26,30,31,32] # julia hand-cobbled mapping
+# const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7 ,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # mapping used in Rust and Python impls
+# const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32] # straigt mapping
 
-# function main() 
-#     game = GameState( 
-#         rolls_remaining= 2,
-#         sorted_dievals= DieVals(3,4,4,6,6),
-#         sorted_open_slots= SortedSlots([6,12]), 
-#     )
-#     app = App(game)
-#     build_cache!(app)
-#     lhs=app.ev_cache[game]
-#     println("$lhs")
-#     # @assert(round(lhs.ev,digits=2) == 20.73)
-# end
+function main() 
+    game = GameState( 
+        rolls_remaining= 2,
+        sorted_dievals= DieVals(3,4,4,6,6),
+        sorted_open_slots= SortedSlots([6,12]), 
+    )
+    app = App(game)
+    build_cache!(app)
+    lhs=app.ev_cache[game]
+    println("$lhs")
+    # @assert(round(lhs.ev,digits=2) == 20.73)
+end
 
-# main()
+main()
 
-game = GameState(   
-    rolls_remaining= 1, 
-    sorted_open_slots= [YAHTZEE], 
-    sorted_dievals= (1,2,3,4,5),
-)
-app = App(game)
-build_cache!(app)
-result = app.ev_cache[app.game]
-print(result.ev) # should be 0.038580246913580245
-# @assert isapprox(result.ev , 6.0/7776.0 * 50.0,  atol=0.05)
+# game = GameState(   
+#     rolls_remaining= 1, 
+#     sorted_open_slots= [YAHTZEE], 
+#     sorted_dievals= (1,2,3,4,5),
+# )
+# app = App(game)
+# build_cache!(app)
+# result = app.ev_cache[app.game]
+# print(result.ev) # should be 0.038580246913580245
+# # @assert isapprox(result.ev , 6.0/7776.0 * 50.0,  atol=0.05)
