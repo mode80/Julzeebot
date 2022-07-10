@@ -1,5 +1,3 @@
-module Julzeebot 
-
 # import StaticArrays: SVector
 import Combinatorics: permutations, with_replacement_combinations, combinations, powerset
 import DataStructures: counter
@@ -727,6 +725,3 @@ function main()
     println("$lhs")
     @assert lhs.ev ≈ 20.73   atol=0.1
 end
-
-
-end # module
