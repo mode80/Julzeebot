@@ -1,3 +1,5 @@
+module Julzeebot 
+
 # import StaticArrays: SVector
 import Combinatorics: permutations, with_replacement_combinations, combinations, powerset
 import DataStructures: counter
@@ -12,15 +14,15 @@ CONSTS, UTILS
 -------------------------------------------------------------=#
 
 const u8 = UInt8; u16 = UInt16; const f32=Float32; f64=Float64; # lazy rust-like abbreviations
-const Choice = u8 # represents EITHER chosen scorecard Slot, OR a chosen dice Selection (below)
 const Selection = u8 # a bitfield representing a selection of dice to roll (1 means roll, 0 means don't)
+const Choice = u8 # represents EITHER chosen scorecard Slot, OR a chosen dice Selection (below)
 const DieVal = u8 # a single die value 0 to 6 where 0 means "unselected"
 const Slot = u8
 
 # a single scorecard slot with values ranging from ACES to CHANCE 
 const ACES = 0x1; const TWOS = 0x2; const THREES = 0x3; const FOURS = 0x4; const FIVES = 0x5; const SIXES = 0x6;
-const THREE_OF_A_KIND = 0x7; const FOUR_OF_A_KIND = 0x8; const FULL_HOUSE = 0x9; 
 const SM_STRAIGHT = 0xA; const LG_STRAIGHT = 0xB; const YAHTZEE = 0xC; const CHANCE = 0xD;
+const THREE_OF_A_KIND = 0x7; const FOUR_OF_A_KIND = 0x8; const FULL_HOUSE = 0x9; 
 
 #=-------------------------------------------------------------
 ChoiceEV
@@ -29,6 +31,7 @@ struct ChoiceEV
     choice::Choice
     ev::Float32
 end
+
 
 #=-------------------------------------------------------------
 DieVals
@@ -543,8 +546,9 @@ function build_cache!(self::App) # = let
                                         newvals = copy(dieval_combo)
                                         blit!(newvals, roll_outcome.dievals, roll_outcome.mask)
                                         # newvals = sorted[&newvals]; 
+                                        sorted_dievals = SORTED_DIEVALS[newvals] 
                                         state_to_get = GameState(
-                                            sorted_dievals= SORTED_DIEVALS[newvals], 
+                                            sorted_dievals= sorted_dievals, 
                                             sorted_open_slots= slots, 
                                             upper_total= upper_total, 
                                             rolls_remaining= next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
@@ -708,8 +712,8 @@ SELECTION_RANGES = selection_ranges()
 OUTCOMES = all_selection_outcomes()
 SORTED_DIEVALS = sorted_dievals()
 const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13,19,15,21,24,28,16,22,25,29,26,30,31,32] # julia hand-cobbled mapping
-# const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7 ,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # mapping used in Rust and Python impls
-# const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32] # straigt mapping
+# const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # mapping used in Rust and Python impls after 1-basing
+# const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32] # straight mapping  #TODO somehow these all work?
 
 function main() 
     game = GameState( 
@@ -721,18 +725,8 @@ function main()
     build_cache!(app)
     lhs=app.ev_cache[game]
     println("$lhs")
-    # @assert(round(lhs.ev,digits=2) == 20.73)
+    @assert lhs.ev ≈ 20.73   atol=0.1
 end
 
-main()
 
-# game = GameState(   
-#     rolls_remaining= 1, 
-#     sorted_open_slots= [YAHTZEE], 
-#     sorted_dievals= (1,2,3,4,5),
-# )
-# app = App(game)
-# build_cache!(app)
-# result = app.ev_cache[app.game]
-# print(result.ev) # should be 0.038580246913580245
-# # @assert isapprox(result.ev , 6.0/7776.0 * 50.0,  atol=0.05)
+end # module
