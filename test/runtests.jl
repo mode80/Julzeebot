@@ -63,17 +63,20 @@ using Test
 
     @test straight_len(sort([1,2,0,5,3])) == 4
 
-    @test_skip @test "ev_of_yahtzee_in_1_roll" begin
-    # see https://www.yahtzeemanifesto.com/yahtzee-odds.php 
-        game = GameState(   rolls_remaining= 1, 
-                            sorted_open_slots= [YAHTZEE], 
-                            sorted_dievals= [1,2,3,4,5],
+    @testset "ev_of_yahtzee_in_1_roll" begin
+        # see https://www.yahtzeemanifesto.com/yahtzee-odds.php 
+        game = GameState(   
+            [1,2,3,4,5], #dievals
+            [YAHTZEE], #slots
+            0, #upper_total
+            1, #rolls_left
+            false # yahtzee_bonus_avail
         )
         app = App(game)
         build_cache!(app)
         result = app.ev_cache[app.game]
         in_1_odds = 6.0/7776.0; 
-        @test result.ev == in_1_odds * 50.0    atol=0.1 
+        @test result.ev ≈ in_1_odds * 50.0    atol=0.1 
     end
 
     # @test_skip @testset "known_values" begin 
