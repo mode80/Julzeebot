@@ -215,12 +215,12 @@ end
 GameState
 -------------------------------------------------------------=#
 
-Base.@kwdef struct GameState # TODO test impact of calling keyword funcs are bad for performance https://techytok.com/code-optimisation-in-julia/#keyword-arguments 
+struct GameState # TODO test impact of calling keyword funcs are bad for performance https://techytok.com/code-optimisation-in-julia/#keyword-arguments 
     sorted_dievals ::DieVals
     sorted_open_slots ::SortedSlots 
-    upper_total ::u8 = 0
-    rolls_remaining ::u8 = 3 
-    yahtzee_bonus_avail ::Bool = false
+    upper_total ::u8 # = 0
+    rolls_remaining ::u8 # = 3 
+    yahtzee_bonus_avail ::Bool # = false
 end 
 
 Base.hash(self::GameState, h::UInt) = 
@@ -421,11 +421,11 @@ function build_cache!(self::App) # = let
             for upper_total in relevant_upper_totals(slot)
                 for dieval_combo in all_dieval_combos
                     state = GameState(
-                        rolls_remaining = 0, 
-                        sorted_dievals = dieval_combo, 
-                        sorted_open_slots = slot, 
-                        upper_total = upper_total, 
-                        yahtzee_bonus_avail = yahtzee_bonus_available
+                        dieval_combo, 
+                        slot, 
+                        upper_total, 
+                        0, 
+                        yahtzee_bonus_available
                     ) 
                     score = score_first_slot_in_context(state) 
                     choice_ev = ChoiceEV(single_slot, score)
@@ -491,11 +491,11 @@ function build_cache!(self::App) # = let
                                     for slots_piece in unique([head,tail])
                                         upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0)# only relevant totals are cached
                                         state_to_get = GameState(
-                                            sorted_dievals = dievals_or_placeholder,
-                                            sorted_open_slots= slots_piece, 
-                                            upper_total= upper_total_now, 
-                                            rolls_remaining = rolls_remaining_now, 
-                                            yahtzee_bonus_avail= yahtzee_bonus_avail_now,
+                                            dievals_or_placeholder,
+                                            slots_piece, 
+                                            upper_total_now, 
+                                            rolls_remaining_now, 
+                                            yahtzee_bonus_avail_now,
                                         )
                                         # cache = ifelse(slots_piece==head , leaf_cache , self.ev_cache) #TODO why need leaf_cache separate from main? how is this shared state read from multi threads??
                                         choice_ev = self.ev_cache[state_to_get]
@@ -520,11 +520,11 @@ function build_cache!(self::App) # = let
                                 end  
                                 
                                 state_to_set = GameState(
-                                    sorted_dievals = dieval_combo,
-                                    sorted_open_slots = slots,
-                                    rolls_remaining = 0, 
-                                    upper_total =upper_total, 
-                                    yahtzee_bonus_avail = yahtzee_bonus_available,
+                                    dieval_combo,
+                                    slots,
+                                    upper_total, 
+                                    0, 
+                                    yahtzee_bonus_available,
                                 ) 
                                 self.ev_cache[state_to_set] = slot_choice_ev
                                 output_state_choice(self, state_to_set, slot_choice_ev)
@@ -546,11 +546,11 @@ function build_cache!(self::App) # = let
                                         # newvals = sorted[&newvals]; 
                                         sorted_dievals = SORTED_DIEVALS[newvals] 
                                         state_to_get = GameState(
-                                            sorted_dievals= sorted_dievals, 
-                                            sorted_open_slots= slots, 
-                                            upper_total= upper_total, 
-                                            rolls_remaining= next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
-                                            yahtzee_bonus_avail= yahtzee_bonus_available, 
+                                            sorted_dievals, 
+                                            slots, 
+                                            upper_total, 
+                                            next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
+                                            yahtzee_bonus_available, 
                                         )
                                         ev_for_this_selection_outcome = self.ev_cache[state_to_get].ev 
                                         total_ev_for_selection += ev_for_this_selection_outcome * roll_outcome.arrangements # bake into upcoming average
@@ -562,11 +562,11 @@ function build_cache!(self::App) # = let
                                     end 
                                 end 
                                 state_to_set = GameState(
-                                    sorted_dievals = dieval_combo,
-                                    sorted_open_slots = slots, 
-                                    upper_total =upper_total, 
-                                    yahtzee_bonus_avail = yahtzee_bonus_available, 
-                                    rolls_remaining = rolls_remaining, 
+                                    dieval_combo,
+                                    slots, 
+                                    upper_total, 
+                                    rolls_remaining, 
+                                    yahtzee_bonus_available, 
                                 ) 
                                 output_state_choice(self, state_to_set, best_dice_choice_ev)
                                 self.ev_cache[state_to_set]=best_dice_choice_ev
@@ -715,9 +715,9 @@ const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13
 
 function main() 
     game = GameState( 
-        rolls_remaining= 2,
-        sorted_dievals= DieVals(3,4,4,6,6),
-        sorted_open_slots= SortedSlots([6,12]), 
+        DieVals(3,4,4,6,6),
+        SortedSlots([6,12]), 
+        0, 2, false
     )
     app = App(game)
     build_cache!(app)
