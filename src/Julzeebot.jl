@@ -141,12 +141,11 @@ contains(self::Slots, i) ::Bool = (self.data & (1<<u16(i)) > 0)
 #     end
 # end
 
-# remove!(self::SortedSlots, slots... ) = let
-#     for slot in slots
-#         mask = ~( 1 << u16(slot) )
-#         self.data &= mask # force off
-#     end
-# end
+remove(self::Slots, slot_to_remove ) ::Slots = let
+    mask = ~( 1 << u16(slot_to_remove) )
+    newdata::u16 = self.data & mask # force off
+    return Slots(newdata)
+end
 
 # Base.getindex(self::SortedSlots, i::Int)::Bool = contains(self,i) 
 
@@ -482,12 +481,7 @@ function build_cache!(self::App) # = let
                                     yahtzee_bonus_avail_now = yahtzee_bonus_available
                                     upper_total_now = upper_total
                                     dievals_or_placeholder = dieval_combo
-                                    if slots_len > 1 # make the tail all but the head, or else just the head 
-                                        headless = [s for s in slots if s != head_slot]
-                                        tail = Slots(headless) 
-                                    else 
-                                        tail = head 
-                                    end
+                                    tail = ifelse(slots_len>1, remove(slots,head_slot), head )# make the tail all but the head, or else just the head  
                                     head_plus_tail_ev = 0.0
     
                                     # find the collective ev for the all the slots with this iteration's slot being first 
@@ -735,4 +729,3 @@ function main()
 end
 
 main()
-ain()
