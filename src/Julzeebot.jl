@@ -487,7 +487,7 @@ function build_cache!(self::App) # = let
                                     # find the collective ev for the all the slots with this iteration's slot being first 
                                     # do this by summing the ev for the first (head) slot with the ev value that we look up for the remaining (tail) slots
                                     rolls_remaining_now = 0
-                                    for slots_piece in unique([head,tail])
+                                    for (i, slots_piece) in enumerate(unique([head,tail]))
                                         upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0)# only relevant totals are cached
                                         state_to_get = GameState(
                                             dievals_or_placeholder,
@@ -498,7 +498,7 @@ function build_cache!(self::App) # = let
                                         )
                                         # cache = ifelse(slots_piece==head , leaf_cache , self.ev_cache) #TODO why need leaf_cache separate from main? how is this shared state read from multi threads??
                                         choice_ev = self.ev_cache[state_to_get]
-                                        if slots_piece==head  # on the first pass only.. 
+                                        if i==1 #on the first pass only..  
                                             #going into tail slots next, we may need to adjust the state based on the head choice
                                             if choice_ev.choice <= SIXES  # adjust upper total for the next pass 
                                                 added = choice_ev.ev % 100; # the modulo 100 here removes any yathzee bonus from ev since that doesnt' count toward upper bonus total
