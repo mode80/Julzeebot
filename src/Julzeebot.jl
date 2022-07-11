@@ -716,7 +716,7 @@ const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13
 function main() 
     
     game = GameState( 
-        DieVals([3,4,4,6,6]),
+        DieVals(0),
         Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
         # Slots([6,8,12]), 
         0, 3, false
@@ -725,7 +725,7 @@ function main()
     build_cache!(app)
     lhs=app.ev_cache[game]
     println("$lhs")
-    @assert lhs.ev ≈ 23.9   atol=0.1
+    # @assert lhs.ev ≈ 23.9   atol=0.1
 end
 
 main()
