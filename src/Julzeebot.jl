@@ -185,7 +185,7 @@ relevant_upper_totals(slots::Slots) :: Vector{u8} = let ## TODO fix to this simp
     slots_vals = (UPPER_SCORES[i] for i in used_slot_idxs) 
     used_score_perms = collect(Iterators.product(slots_vals...))
     for perm in used_score_perms
-        tot = sum( perm )
+        tot = sum( perm; init=0 )
         push!(totals, min(tot,63) )
     end 
     push!(totals,0) # 0 is always relevant and must be added here explicitly when there are no used upper slots 
@@ -209,7 +209,7 @@ end
 #=-------------------------------------------------------------
 Outcome
 -------------------------------------------------------------=#
-Base.@kwdef struct Outcome  
+struct Outcome  
     dievals::DieVals
     mask::DieVals # stores a pre-made mask for blitting this outcome onto a GameState.DieVals.data u16 later
     arrangements::u8  # how many indistinguisable ways can these dievals be arranged (ie swapping identical dievals)
@@ -488,7 +488,7 @@ function build_cache!(self::App) # = let
                                     # do this by summing the ev for the first (head) slot with the ev value that we look up for the remaining (tail) slots
                                     rolls_remaining_now = 0
                                     for (i, slots_piece) in enumerate(unique([head,tail]))
-                                        upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0)# only relevant totals are cached
+                                        upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0)# TODO lookup table for best_upper_total? # only relevant totals are cached
                                         state_to_get = GameState(
                                             dievals_or_placeholder,
                                             slots_piece, 
@@ -717,8 +717,9 @@ function main()
     
     game = GameState( 
         DieVals([3,4,4,6,6]),
-        Slots([6,8,12]), 
-        0, 0, false
+        Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
+        # Slots([6,8,12]), 
+        0, 3, false
     )
     app = App(game)
     build_cache!(app)
