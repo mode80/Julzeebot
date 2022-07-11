@@ -78,7 +78,7 @@ end
 
 Base.isequal(self::DieVals, other::DieVals) = isequal(self.data, other.data) 
 
-# Base.hash(self::DieVals, h::UInt) = hash(self.data)
+Base.hash(self::DieVals, h::UInt) = hash(self.data,h)
 
 
 #=-------------------------------------------------------------
@@ -101,7 +101,7 @@ end
 
 Base.convert(::Type{Slots}, v::Vector) = Slots(v)
 
-Base.hash(self::Slots, h::UInt) = hash(self.data)
+Base.hash(self::Slots, h::UInt) = hash(self.data,h)
 
 Base.isequal(self::Slots, other::Slots) = isequal(self.data, other.data)
 
@@ -238,8 +238,8 @@ Base.hash(self::GameState, h::UInt) =
     )))))
 
 Base.isequal(self::GameState, other::GameState) = 
-    isequal(self.sorted_dievals, other.sorted_dievals) && 
-    isequal(self.sorted_open_slots, other.sorted_open_slots) && 
+    isequal(self.sorted_dievals.data, other.sorted_dievals.data) && 
+    isequal(self.sorted_open_slots.data, other.sorted_open_slots.data) && 
     isequal(self.upper_total, other.upper_total) && 
     isequal(self.rolls_remaining, other.rolls_remaining) && 
     isequal(self.yahtzee_bonus_avail, other.yahtzee_bonus_avail) 
@@ -731,4 +731,4 @@ function main()
     @assert lhs.ev ≈ 20.73   atol=0.1
 end
 
-foo() = 1+2
+main()
