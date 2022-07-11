@@ -91,9 +91,9 @@ end
 
 Slots(v::Vector) = let 
     # @assert(length(v) <= 13)
-    data::u16 = 0
+    data = 0
     for slot in v 
-        mask = 1 << u16(slot)
+        mask = 1 << slot
         data |= mask # force on
     end
     # for x in iterable; insert!(retval, x); end  
@@ -109,7 +109,7 @@ Base.isequal(self::Slots, other::Slots) = isequal(self.data, other.data)
 Base.iterate(self::Slots, state=0) = let 
     while state < 13 
         state+=1
-        if contains(self,state) return (Slot(state), state) end
+        if has(self,state) return (Slot(state), state) end
     end 
     return nothing
 end
@@ -133,7 +133,17 @@ Base.getindex(self::Slots, i)::Slot= let
     return Slot(bit_index)
 end
 
-contains(self::Slots, i) ::Bool = (self.data & (1<<u16(i)) > 0)
+# has(slots_data::u16, slot) ::Bool = let
+#     a = slots_data
+#     b::u16= UInt16(0x1)
+#     c::u16= slot
+#     d::u16=0
+#     (a & b << c) > d 
+# end
+
+has(slots::Slots, slot) ::Bool = let
+    slots.data & (1<<slot) > 0
+end
 
 # insert!(self::SortedSlots, slots... ) = let
 #     for slot in slots
@@ -170,19 +180,19 @@ end
 
 # these are all the possible score entries for each upper slot
 const UPPER_SCORES = ( 
-    (0,1,2,3,4,5),      # ACES
-    (0,2,4,6,8,10),     # TWOS
-    (0,3,6,9,12,15),    # THREES 
-    (0,4,8,12,16,20),   # FOURS
-    (0,5,10,15,20,25),  # FIVES
-    (0,6,12,18,24,30),  # SIXES
+    [0,1,2,3,4,5],      # ACES
+    [0,2,4,6,8,10],     # TWOS
+    [0,3,6,9,12,15],    # THREES 
+    [0,4,8,12,16,20],   # FOURS
+    [0,5,10,15,20,25],  # FIVES
+    [0,6,12,18,24,30],  # SIXES
 )
 
 """ returns the unique and relevant "upper bonus total" that could have occurred from the previously used upper slots """
 relevant_upper_totals(slots::Slots) :: Vector{u8} = let # TODO switch to this simplified version in the Rust implmentation for fairness?
     totals = Set(u8[])
     used_slot_idxs = previously_used_upper_slots(slots)
-    slots_vals = (UPPER_SCORES[i] for i in used_slot_idxs) 
+    slots_vals = [UPPER_SCORES[i] for i in used_slot_idxs] 
     used_score_perms = Iterators.product(slots_vals...)
     for perm in used_score_perms # TODO this is a wasteful approach that could be optimized if profilitng indicates it mattered
         tot = sum( perm; init=0 )
@@ -251,7 +261,7 @@ counts(self::GameState) :: Tuple{Int,Int} = let
     for subset_len in 1:length(self.open_slots)
         for slots_vec in combinations( collect(self.open_slots), subset_len )  
             slots = Slots(slots_vec)
-            joker_rules = contains(slots,YAHTZEE) # yahtzees aren't wild whenever yahtzee slot is still available 
+            joker_rules = has(slots,YAHTZEE) # yahtzees aren't wild whenever yahtzee slot is still available 
             totals = relevant_upper_totals(slots) 
             for _ in totals 
                 for __ in unique([false,joker_rules]) #
@@ -414,7 +424,7 @@ BUILD_CACHE
 
 # gather up expected values in a multithreaded bottom-up fashion. this is like.. the main thing
 function build_cache!(self::App) # = let 
-    all_dieval_combos=[o.dievals for o in outcomes_for_selection(0b11111)] # TODO backport this depature to python/rust?
+    all_dieval_combos=[o.dievals for o in outcomes_for_selection(0b11111) ] # TODO backport this depature to python/rust?
     placeholder_dievals = DieVals(0) 
 
     # first handle special case of the most leafy leaf calcs -- where there's one slot left and no rolls remaining
@@ -443,7 +453,7 @@ function build_cache!(self::App) # = let
         # for each slotset (of above length)
         for slots_vec in combinations(self.game.open_slots, slots_len) 
             slots::Slots = Slots(slots_vec)
-            joker_rules_in_play = !contains(slots,YAHTZEE) # joker rules are in effect whenever the yahtzee slot is already filled 
+            joker_rules_in_play = !has(slots,YAHTZEE) # joker rules are in effect whenever the yahtzee slot is already filled 
 
             # for each upper total 
             for upper_total::u8 in relevant_upper_totals(slots) 
@@ -473,8 +483,8 @@ function build_cache!(self::App) # = let
                                 for slot in slots 
 
                                     #joker rules say extra yahtzees must be played in their matching upper slot if it's available
-                                    first_dieval = dieval_combo[1]
-                                    joker_rules_matter = joker_rules_in_play && score_yahtzee(dieval_combo)>0 && contains(slots,first_dieval)
+                                    first_dieval::u8 = dieval_combo[1]
+                                    joker_rules_matter = joker_rules_in_play && score_yahtzee(dieval_combo)>0 && has(slots,first_dieval)
                                     head_slot::Slot = ifelse(joker_rules_matter , first_dieval , slot)
                                     head = Slots([head_slot])
 
@@ -539,7 +549,7 @@ function build_cache!(self::App) # = let
                                     total_ev_for_selection = 0.0 
                                     outcomes_arrangements_count = 0 
                                     outcomes = outcomes_for_selection(selection) 
-                                    for roll_outcome in outcomes
+                                    for roll_outcome in outcomes 
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
                                         # newvals = sorted[&newvals]; 
                                         sorted_dievals::DieVals = SORTED_DIEVALS[newvals] 
@@ -683,7 +693,7 @@ outcomes_for_selection(selection::Selection) = let #(selection:u8)->&'static [Ou
     one_based_idx = selection + 1 # selection bitfield is 0 to 31 but Julia indexes are from 1 to 32
     idx = RANGE_IDX_FOR_SELECTION[one_based_idx]
     range = SELECTION_RANGES[idx]
-    OUTCOMES[range]
+    view(OUTCOMES,range)
 end
 
 const SELECTION_RANGES = selection_ranges()  
