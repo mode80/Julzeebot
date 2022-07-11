@@ -76,6 +76,11 @@ Base.setindex!(self::DieVals, val::DieVal, i) = let #TODO removable for immutabl
     self.data = (self.data & mask) | ( UInt16(val) << bitpos ) #  #  punch & fill hole
 end
 
+Base.isequal(self::DieVals, other::DieVals) = isequal(self.data, other.data) 
+
+# Base.hash(self::DieVals, h::UInt) = hash(self.data)
+
+
 #=-------------------------------------------------------------
 SortedSlots
 -------------------------------------------------------------=#
