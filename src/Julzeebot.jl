@@ -6,12 +6,13 @@ using Memoize
 using Base
 using ProgressMeter 
 using Test
+using Infiltrator
 
 #=-------------------------------------------------------------
 CONSTS, UTILS
 -------------------------------------------------------------=#
-
 const u8 = UInt8; u16 = UInt16; const f32=Float32; f64=Float64; # lazy rust-like abbreviations
+
 const Selection = u8 # a bitfield representing a selection of dice to roll (1 means roll, 0 means don't)
 const Choice = u8 # represents EITHER chosen scorecard Slot, OR a chosen dice Selection (below)
 const DieVal = u8 # a single die value 0 to 6 where 0 means "unselected"
@@ -169,7 +170,6 @@ end
 
 # these are all the possible score entries for each upper slot
 const UPPER_SCORES = ( 
-    (0,0,0,0,0,0),      # STUB
     (0,1,2,3,4,5),      # ACES
     (0,2,4,6,8,10),     # TWOS
     (0,3,6,9,12,15),    # THREES 
@@ -179,21 +179,21 @@ const UPPER_SCORES = (
 )
 
 """ returns the unique and relevant "upper bonus total" that could have occurred from the previously used upper slots """
-relevant_upper_totals(slots::Slots) :: Vector{u8} = let ## TODO fix to this simplified version in the rust implmentation for fairness
+relevant_upper_totals(slots::Slots) :: Vector{u8} = let # TODO switch to this simplified version in the Rust implmentation for fairness?
     totals = Set(u8[])
     used_slot_idxs = previously_used_upper_slots(slots)
     slots_vals = (UPPER_SCORES[i] for i in used_slot_idxs) 
-    used_score_perms = collect(Iterators.product(slots_vals...))
-    for perm in used_score_perms
+    used_score_perms = Iterators.product(slots_vals...)
+    for perm in used_score_perms # TODO this is a wasteful approach that could be optimized if profilitng indicates it mattered
         tot = sum( perm; init=0 )
         push!(totals, min(tot,63) )
     end 
     push!(totals,0) # 0 is always relevant and must be added here explicitly when there are no used upper slots 
 
-    # filter out the totals that aren't relevant because they can't be reached by the upper slots remaining 
+    # filter out the lower totals that aren't relevant because they can't be reached by the upper slots remaining 
     # this filters out a lot of unneeded state space but means the lookup function must map extraneous deficits to a default 
     best_current_slot_total = best_upper_total(slots)
-    return [x for x in totals if x==0 || x + best_current_slot_total >=63]
+    [x for x in totals if x==0 || x + best_current_slot_total >=63]
 end
 
 best_upper_total(self::Slots) ::u8 = let
@@ -221,7 +221,7 @@ GameState
 
 struct GameState # TODO test impact of calling keyword funcs are bad for performance https://techytok.com/code-optimisation-in-julia/#keyword-arguments 
     sorted_dievals ::DieVals
-    sorted_open_slots ::Slots 
+    open_slots ::Slots 
     upper_total ::u8 # = 0
     rolls_remaining ::u8 # = 3 
     yahtzee_bonus_avail ::Bool # = false
@@ -230,7 +230,7 @@ end
 Base.hash(self::GameState, h::UInt) = 
     hash(
         self.sorted_dievals.data, hash(
-            self.sorted_open_slots.data, hash(
+            self.open_slots.data, hash(
                 self.upper_total, hash(
                     self.rolls_remaining, hash(
                         self.yahtzee_bonus_avail, h
@@ -238,7 +238,7 @@ Base.hash(self::GameState, h::UInt) =
 
 Base.isequal(self::GameState, other::GameState) = 
     isequal(self.sorted_dievals.data, other.sorted_dievals.data) && 
-    isequal(self.sorted_open_slots.data, other.sorted_open_slots.data) && 
+    isequal(self.open_slots.data, other.open_slots.data) && 
     isequal(self.upper_total, other.upper_total) && 
     isequal(self.rolls_remaining, other.rolls_remaining) && 
     isequal(self.yahtzee_bonus_avail, other.yahtzee_bonus_avail) 
@@ -248,8 +248,8 @@ Base.isequal(self::GameState, other::GameState) =
 counts(self::GameState) :: Tuple{Int,Int} = let 
     lookups = 0 
     saves = 0 
-    for subset_len in 1:length(self.sorted_open_slots)
-        for slots_vec in combinations( collect(self.sorted_open_slots), subset_len )  
+    for subset_len in 1:length(self.open_slots)
+        for slots_vec in combinations( collect(self.open_slots), subset_len )  
             slots = Slots(slots_vec)
             joker_rules = contains(slots,YAHTZEE) # yahtzees aren't wild whenever yahtzee slot is still available 
             totals = relevant_upper_totals(slots) 
@@ -266,7 +266,7 @@ end
 score_first_slot_in_context(self::GameState) ::u8 = let
 
     # score slot itself w/o regard to game state */
-        slot::Slot, _ = iterate(self.sorted_open_slots)
+        slot::Slot, _ = iterate(self.open_slots)
         score = score_slot_with_dice(slot, self.sorted_dievals) 
 
     # add upper bonus when needed total is reached */
@@ -297,9 +297,9 @@ end
 print_state_choice(state ::GameState, choice_ev ::ChoiceEV) = let
     if state.rolls_remaining==0 
         # println!("S,{},{},{},{},{},{},{}",
-        println("S, $(choice_ev.choice), $(state.sorted_dievals), $(state.rolls_remaining), $(state.upper_total), $(state.yahtzee_bonus_avail ? "Y" : ""), $(state.sorted_open_slots), $(choice_ev.ev)") 
+        println("S, $(choice_ev.choice), $(state.sorted_dievals), $(state.rolls_remaining), $(state.upper_total), $(state.yahtzee_bonus_avail ? "Y" : ""), $(state.open_slots), $(choice_ev.ev)") 
     else 
-        println("S, $(choice_ev.choice), $(state.sorted_dievals), $(state.rolls_remaining), $(state.upper_total), $(state.yahtzee_bonus_avail ? "Y" : ""), $(state.sorted_open_slots), $(choice_ev.ev)") 
+        println("S, $(choice_ev.choice), $(state.sorted_dievals), $(state.rolls_remaining), $(state.upper_total), $(state.yahtzee_bonus_avail ? "Y" : ""), $(state.open_slots), $(choice_ev.ev)") 
         # println!("D,{:05b},{},{},{},{},{},{}",
         #     choice_ev.choice, state.sorted_dievals, state.rolls_remaining, state.upper_total, 
         #     state.yahtzee_bonus_avail ? "Y" : "", state.sorted_open_slots, choice_ev.ev) 
@@ -418,7 +418,7 @@ function build_cache!(self::App) # = let
     placeholder_dievals = DieVals(0) 
 
     # first handle special case of the most leafy leaf calcs -- where there's one slot left and no rolls remaining
-    for single_slot in self.game.sorted_open_slots   
+    for single_slot in self.game.open_slots   
         slot = Slots([single_slot]) # set of a single slot 
         joker_rules_in_play = single_slot!=YAHTZEE # joker rules in effect when the yahtzee slot is not open 
         for yahtzee_bonus_available in unique([false, joker_rules_in_play])  # yahtzee bonus -might- be available when joker rules are in play 
@@ -438,10 +438,10 @@ function build_cache!(self::App) # = let
     end end end end 
 
     # for each length 
-    for slots_len in 1:length(self.game.sorted_open_slots) 
+    for slots_len in 1:length(self.game.open_slots) 
 
         # for each slotset (of above length)
-        for slots_vec in combinations(self.game.sorted_open_slots, slots_len) 
+        for slots_vec in combinations(self.game.open_slots, slots_len) 
             slots::Slots = Slots(slots_vec)
             joker_rules_in_play = !contains(slots,YAHTZEE) # joker rules are in effect whenever the yahtzee slot is already filled 
 
@@ -594,28 +594,6 @@ end #fn build_cache
 INITIALIZERS
 -------------------------------------------------------------=#
 
-# #all possible sorted combos of 5 dievals (252 of them)
-# dievals_for_dieval_id() ::Vector{DieVals} = begin 
-#     out=Vector{DieVals}(undef,253)
-#     out[1]=DieVals(0,0,0,0,0) # first one is the special wildcard 
-#     for (i,combo) in enumerate( with_replacement_combinations(1:6,5) )
-#         out[i+1]=DieVals(combo)
-#     end 
-#     return out
-# end 
-
-# dievals_id_for_dievals() ::Vector{DieValsID} = let 
-#     arr = Vector{DieValsID}(undef,28087)
-#     arr[1] = DieValsID(0) # first one is the special wildcard 
-#     for (i,combo) in enumerate( with_replacement_combinations(1:6,5) )
-#         for perm in permutations(combo,5) |> unique 
-#             dievals = DieVals(perm) 
-#             arr[dievals.data+1]= DieValsID(i+1) ;
-#         end 
-#     end
-#     return arr
-# end
-
 sorted_dievals() ::Dict{DieVals} = let # TODO this could return a sparse array of only 2^5 = 32,768 u16s for faster lookups 
     dict = Dict{DieVals,DieVals}()
     sizehint!(dict,28087) 
@@ -717,15 +695,16 @@ function main()
     
     game = GameState( 
         DieVals(0),
-        Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
+        # Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
+        Slots([1,4]),
         # Slots([6,8,12]), 
         0, 3, false
     )
     app = App(game)
     build_cache!(app)
     lhs=app.ev_cache[game]
-    println("$lhs")
+    println("\n$(bitstring(lhs.choice))\t$(round(lhs.ev,digits=2))")
     # @assert lhs.ev ≈ 23.9   atol=0.1
 end
 
-main()
+# main()
