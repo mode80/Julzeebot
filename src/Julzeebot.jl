@@ -230,11 +230,11 @@ end
 
 Base.hash(self::GameState, h::UInt) = 
     hash(
-        self.sorted_dievals, hash(
-            self.sorted_open_slots, hash(
+        self.sorted_dievals.data, hash(
+            self.sorted_open_slots.data, hash(
                 self.upper_total, hash(
                     self.rolls_remaining, hash(
-                        self.yahtzee_bonus_avail
+                        self.yahtzee_bonus_avail, h
     )))))
 
 Base.isequal(self::GameState, other::GameState) = 
