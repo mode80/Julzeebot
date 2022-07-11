@@ -35,7 +35,7 @@ end
 #=-------------------------------------------------------------
 DieVals
 -------------------------------------------------------------=#
-mutable struct DieVals <: AbstractArray{DieVal, 1} #TODO make immutable to live on the stack in Julia
+struct DieVals <: AbstractArray{DieVal, 1} #TODO make immutable to live on the stack in Julia
     data::u16 # 5 dievals, each from 0 to 6, can be encoded in 2 bytes total, each taking 3 bits
 end
 
@@ -54,8 +54,8 @@ DieVals(d1::T, d2::T, d3::T, d4::T, d5::T) where {T} = let
 end
 
 # blit the 'from' dievals into the 'self' dievals with the help of a mask where 0 indicates incoming 'from' bits and 1 indicates none incoming 
-blit!(self::DieVals, from::DieVals, mask::DieVals,) = # TODO make this into "blitted!" so DieVals can be immutable and live on the stack
-    self.data = (self.data & mask.data) | from.data 
+blit(self::DieVals, from::DieVals, mask::DieVals,) = 
+    DieVals((self.data & mask.data) | from.data)
 
 Base.convert(::Type{DieVals}, from::Vector{Int64}) = DieVals(from) 
 
@@ -71,10 +71,10 @@ Base.length(_::DieVals) = return 5
 
 Base.getindex(self::DieVals, i) ::DieVal = ((self.data >> ((i-1)*3)) & 0b111) 
 
-Base.setindex!(self::DieVals, val::DieVal, i) = let #TODO removable for immutable DieVals? 
+setindex(self::DieVals, val::DieVal, i) = let #TODO removable for immutable DieVals? 
     bitpos = 3*(i-1) # widths of 3 bits per value
     mask = ~(UInt16(0b111) << bitpos) # hole maker
-    self.data = (self.data & mask) | ( UInt16(val) << bitpos ) #  #  punch & fill hole
+    DieVals( (self.data&mask) | (UInt16(val)<<bitpos) )#  #  punch & fill hole
 end
 
 Base.isequal(self::DieVals, other::DieVals) = isequal(self.data, other.data) 
@@ -540,8 +540,7 @@ function build_cache!(self::App) # = let
                                     outcomes_arrangements_count = 0 
                                     outcomes = outcomes_for_selection(selection) 
                                     for roll_outcome in outcomes
-                                        newvals = copy(dieval_combo)
-                                        blit!(newvals, roll_outcome.dievals, roll_outcome.mask)
+                                        newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
                                         # newvals = sorted[&newvals]; 
                                         sorted_dievals::DieVals = SORTED_DIEVALS[newvals] 
                                         state_to_get = GameState(
@@ -645,18 +644,22 @@ all_selection_outcomes() ::Vector{Outcome} = let
     retval = Vector{Outcome}(undef,1683) 
     i=0
     idx_combos = powerset(1:5) 
-    for idx_combo in idx_combos 
-        dievals = DieVals() 
-        for dievals_combo in with_replacement_combinations(1:6, length(idx_combo))
+    for idx_combo_vec in idx_combos 
+        dievals_vec = fill(DieVal(0),5)#Vector{DieVal}(0x0,5) 
+        for dievals_combo_vec in with_replacement_combinations(1:6, length(idx_combo_vec))
             i+=1
-            mask = DieVals(0b111,0b111,0b111,0b111,0b111)
-            for (j, val) in enumerate(dievals_combo)
-                idx = idx_combo[j] 
-                dievals[idx] = DieVal(val) 
-                mask[idx]=DieVal(0)
+            mask_vec = [0b111,0b111,0b111,0b111,0b111]
+            for (j, val) in enumerate(dievals_combo_vec)
+                idx = idx_combo_vec[j] 
+                dievals_vec[idx] = DieVal(val) 
+                mask_vec[idx]=DieVal(0)
             end 
-            arrangements = distinct_arrangements_for(dievals_combo)
-            retval[i]=Outcome(copy(dievals),copy(mask),arrangements)
+            arrangements = distinct_arrangements_for(dievals_combo_vec)
+            retval[i]=Outcome(
+                DieVals(dievals_vec),
+                DieVals(mask_vec),
+                arrangements
+            )
         end 
     end 
     return retval
@@ -696,8 +699,8 @@ function main()
     game = GameState( 
         DieVals(0),
         # Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
-        Slots([1,4]),
-        # Slots([6,8,12]), 
+        # Slots([1,4]),
+        Slots([6,8,12]), 
         0, 3, false
     )
     app = App(game)
