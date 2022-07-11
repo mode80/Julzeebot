@@ -718,17 +718,21 @@ const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13
 # const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # mapping used in Rust and Python impls after 1-basing
 # const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32] # straight mapping  #TODO somehow these all work?
 
+
 function main() 
+    
+    # this runs in ~7.5s in multithreaded Rust
     game = GameState( 
         DieVals([3,4,4,6,6]),
-        Slots([6,12]), 
-        0, 2, false
+        Slots([1,2,8,9,10,11,12,13]), 
+        0, 0, false
     )
     app = App(game)
     build_cache!(app)
     lhs=app.ev_cache[game]
     println("$lhs")
-    @assert lhs.ev ≈ 20.73   atol=0.1
+    @assert lhs.ev ≈ 130.53   atol=0.1
 end
 
 main()
+ain()
