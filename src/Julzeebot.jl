@@ -715,17 +715,16 @@ const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13
 
 function main() 
     
-    # this runs in ~7.5s in multithreaded Rust
     game = GameState( 
         DieVals([3,4,4,6,6]),
-        Slots([1,2,8,9,10,11,12,13]), 
+        Slots([6,8,12]), 
         0, 0, false
     )
     app = App(game)
     build_cache!(app)
     lhs=app.ev_cache[game]
     println("$lhs")
-    @assert lhs.ev ≈ 130.53   atol=0.1
+    @assert lhs.ev ≈ 23.9   atol=0.1
 end
 
 main()
