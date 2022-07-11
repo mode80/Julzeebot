@@ -442,10 +442,10 @@ function build_cache!(self::App) # = let
             joker_rules_in_play = !contains(slots,YAHTZEE) # joker rules are in effect whenever the yahtzee slot is already filled 
 
             # for each upper total 
-            for upper_total in relevant_upper_totals(slots) 
+            for upper_total::u8 in relevant_upper_totals(slots) 
 
                 # for each yathzee bonus possibility 
-                for yahtzee_bonus_available in unique([false,joker_rules_in_play]) # bonus always unavailable unless yahtzees are wild first
+                for yahtzee_bonus_available::u8 in unique([false,joker_rules_in_play]) # bonus always unavailable unless yahtzees are wild first
 
                     update!(self.bar, self.bar.counter+848484) # advance the progress bar by the number of cache reads coming up for dice selection 
                     update!(self.bar, self.bar.counter+(252 * slots_len * ifelse(slots_len==1, 1 ,2) ) ) # advance for slot selection cache reads
@@ -533,7 +533,7 @@ function build_cache!(self::App) # = let
 
                             #= HANDLE DICE SELECTION =#    
 
-                                next_roll = rolls_remaining-1 
+                                next_roll::u8 = rolls_remaining-1 
                                 best_dice_choice_ev = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
                                 selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
                                 for selection in selections  # we'll try each selection against this starting dice combo  
@@ -650,7 +650,7 @@ end
 
 
 # this generates the ranges that correspond to the outcomes, within the set of all outcomes, indexed by a give selection """
-selection_ranges() ::Vector{UnitRange{Int}} = let  
+selection_ranges() = let  # ::Vector{UnitRange{Int}} 
     sel_ranges=Vector{UnitRange{Int}}(undef,32)
     s = 1
     sel_ranges[1] = 1:1 #TODO redundant?
@@ -706,16 +706,16 @@ outcomes_for_selection(selection::Selection) = let #(selection:u8)->&'static [Ou
     OUTCOMES[range]
 end
 
-SELECTION_RANGES = selection_ranges()  
-OUTCOMES = all_selection_outcomes()
-SORTED_DIEVALS = sorted_dievals()
+const SELECTION_RANGES = selection_ranges()  
+const OUTCOMES = all_selection_outcomes()
+const SORTED_DIEVALS = sorted_dievals()
 const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13,19,15,21,24,28,16,22,25,29,26,30,31,32] # julia hand-cobbled mapping
 # const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # mapping used in Rust and Python impls after 1-basing
 # const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32] # straight mapping  #TODO somehow these all work?
 
 function main() 
     game = GameState( 
-        DieVals(3,4,4,6,6),
+        DieVals([3,4,4,6,6]),
         Slots([6,12]), 
         0, 2, false
     )
@@ -725,3 +725,5 @@ function main()
     println("$lhs")
     @assert lhs.ev ≈ 20.73   atol=0.1
 end
+
+foo() = 1+2
