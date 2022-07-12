@@ -7,6 +7,7 @@ using Base
 using ProgressMeter 
 using Test
 using Infiltrator
+using OffsetArrays
 
 #=-------------------------------------------------------------
 CONSTS, UTILS
@@ -552,7 +553,7 @@ function build_cache!(self::App) # = let
                                     for roll_outcome in outcomes 
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
                                         # newvals = sorted[&newvals]; 
-                                        sorted_dievals::DieVals = SORTED_DIEVALS[newvals] 
+                                        sorted_dievals::DieVals = SORTED_DIEVALS[newvals.data] 
                                         state_to_get = GameState(
                                             sorted_dievals, 
                                             slots, 
@@ -603,16 +604,16 @@ end #fn build_cache
 INITIALIZERS
 -------------------------------------------------------------=#
 
-sorted_dievals() ::Dict{DieVals} = let # TODO this could return a sparse array of only 2^5 = 32,768 u16s for faster lookups 
-    dict = Dict{DieVals,DieVals}()
-    sizehint!(dict,28087) 
-    dict[DieVals(0)] = DieVals(0) # first one is for the special wildcard 
+sorted_dievals() ::OffsetVector{DieVals} = let # TODO this could return a sparse array of only 2^5 = 32,768 u16s for faster lookups 
+    # vec = Vector{DieVals}(undef,32768)
+    vec = OffsetVector{DieVals}(undef,0:32767)
+    vec[DieVals(0).data] = DieVals(0) # first one is for the special wildcard 
     for (_,combo) in enumerate( with_replacement_combinations(1:6,5) )
         for perm in permutations(combo,5) |> unique 
-            dict[DieVals(perm)] = DieVals(combo)
+            vec[DieVals(perm).data] = DieVals(combo)
         end 
     end
-    return dict
+    return vec
 end
 
 
@@ -708,6 +709,7 @@ function main()
     
     game = GameState( 
         DieVals(0),
+        # Slots([1,2,8,9,10,11,12,13]),
         # Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
         # Slots([1,4]),
         Slots([6,8,12]), 
