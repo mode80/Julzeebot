@@ -195,7 +195,7 @@ relevant_upper_totals(slots::Slots) :: Vector{u8} = let # TODO switch to this si
     used_slot_idxs = previously_used_upper_slots(slots)
     slots_vals = [UPPER_SCORES[i] for i in used_slot_idxs] 
     used_score_perms = Iterators.product(slots_vals...)
-    for perm in used_score_perms # TODO this is a wasteful approach that could be optimized if profilitng indicates it mattered
+    for perm in used_score_perms # TODO this is a wasteful approach that isn't much impact on pref but allocates unneeded GBs 
         tot = sum( perm; init=0 )
         push!(totals, min(tot,63) )
     end 
@@ -231,12 +231,15 @@ GameState
 -------------------------------------------------------------=#
 
 struct GameState # TODO test impact of calling keyword funcs are bad for performance https://techytok.com/code-optimisation-in-julia/#keyword-arguments 
-    sorted_dievals ::DieVals
-    open_slots ::Slots 
-    upper_total ::u8 # = 0
-    rolls_remaining ::u8 # = 3 
-    yahtzee_bonus_avail ::Bool # = false
-end 
+    sorted_dievals ::DieVals # 15 bits OR 8 as DieValID (252 possibilities)
+    open_slots ::Slots # 13 bits 
+    upper_total ::u8 # = 6 bits 
+    rolls_remaining ::u8 # = 2 bits 
+    yahtzee_bonus_avail ::Bool # = 1 bit 
+end
+# TODO we could store all of this in a sparse array using 16GB # 2^(15+13+6+2+1)/(1024^3*8)=16gb
+#   or using DieValID 128mb 2^(8+13+6+2+1)/(1024^2*8)=128mb
+# TODO also see @inbounds !!
 
 Base.hash(self::GameState, h::UInt) = 
     hash(
@@ -462,8 +465,8 @@ function build_cache!(self::App) # = let
                 # for each yathzee bonus possibility 
                 for yahtzee_bonus_available::u8 in unique([false,joker_rules_in_play]) # bonus always unavailable unless yahtzees are wild first
 
-                    update!(self.bar, self.bar.counter+848484) # advance the progress bar by the number of cache reads coming up for dice selection 
-                    update!(self.bar, self.bar.counter+(252 * slots_len * ifelse(slots_len==1, 1 ,2) ) ) # advance for slot selection cache reads
+                    ticks = 848484 #=dice selection cache reads =# + (252 * slots_len * (2-(slots_len==1)) ) #= slot selection cache reads =#
+                    update!(self.bar, self.bar.counter+ticks) # advance the progress bar by the number of cache reads coming up for dice selection 
 
                     # for each rolls remaining
                     for rolls_remaining in 0:3  
@@ -553,7 +556,7 @@ function build_cache!(self::App) # = let
                                     for roll_outcome in outcomes 
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
                                         # newvals = sorted[&newvals]; 
-                                        sorted_dievals::DieVals = SORTED_DIEVALS[newvals.data] 
+                                        @inbounds sorted_dievals::DieVals = SORTED_DIEVALS[newvals.data] 
                                         state_to_get = GameState(
                                             sorted_dievals, 
                                             slots, 
@@ -563,8 +566,9 @@ function build_cache!(self::App) # = let
                                         )
                                         ev_for_this_selection_outcome = self.ev_cache[state_to_get].ev 
                                         total_ev_for_selection += ev_for_this_selection_outcome * roll_outcome.arrangements # bake into upcoming average
-                                        outcomes_arrangements_count += roll_outcome.arrangements # we loop through die "combos" but we'll average all "perumtations"
-                                    end  
+                                        arrangements = roll_outcome.arrangements
+                                        outcomes_arrangements_count += arrangements # we loop through die "combos" but we'll average all "perumtations"
+                                    end 
                                     avg_ev_for_selection = total_ev_for_selection / outcomes_arrangements_count
                                     if avg_ev_for_selection > best_dice_choice_ev.ev
                                         best_dice_choice_ev = ChoiceEV(selection, avg_ev_for_selection)
@@ -604,7 +608,7 @@ end #fn build_cache
 INITIALIZERS
 -------------------------------------------------------------=#
 
-sorted_dievals() ::OffsetVector{DieVals} = let # TODO this could return a sparse array of only 2^5 = 32,768 u16s for faster lookups 
+function sorted_dievals() ::OffsetVector{DieVals}  
     # vec = Vector{DieVals}(undef,32768)
     vec = OffsetVector{DieVals}(undef,0:32767)
     vec[DieVals(0).data] = DieVals(0) # first one is for the special wildcard 
@@ -690,10 +694,10 @@ distinct_arrangements_for(dieval_vec) ::u8 = let #(dieval_vec:Vec<DieVal>)->u8{
 end 
 
 # returns a slice from the precomputed dice roll outcomes that corresponds to the given selection bitfield """
-outcomes_for_selection(selection::Selection) = let #(selection:u8)->&'static [Outcome]{
+Base.@propagate_inbounds function outcomes_for_selection(selection::Selection) #(selection:u8)->&'static [Outcome]{
     one_based_idx = selection + 1 # selection bitfield is 0 to 31 but Julia indexes are from 1 to 32
-    idx = RANGE_IDX_FOR_SELECTION[one_based_idx]
-    range = SELECTION_RANGES[idx]
+    @inbounds idx = RANGE_IDX_FOR_SELECTION[one_based_idx]
+    @inbounds range = SELECTION_RANGES[idx]
     view(OUTCOMES,range)
 end
 
@@ -711,7 +715,7 @@ function main()
         DieVals(0),
         # Slots([1,2,8,9,10,11,12,13]),
         # Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
-        # Slots([1,4]),
+        # Slots([6,12]),
         Slots([6,8,12]), 
         0, 3, false
     )
