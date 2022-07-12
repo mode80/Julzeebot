@@ -713,10 +713,11 @@ function main()
     
     game = GameState( 
         DieVals(0),
+        Slots([1,2,3,4,5]),
         # Slots([1,2,8,9,10,11,12,13]),
         # Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
         # Slots([6,12]),
-        Slots([6,8,12]), 
+        # Slots([6,8,12]), 
         0, 3, false
     )
     app = App(game)
