@@ -100,12 +100,12 @@ Base.hash(self::Slots, h::UInt) = hash(self.data,h)
 
 Base.isequal(self::Slots, other::Slots) = isequal(self.data, other.data)
 
-Base.iterate(self::Slots, state=0) = let  #TODO it'd be faster to keep peeled slots.data in state rather than the index 
-    while state < 13 
-        state+=1
-        if has(self,state) return (Slot(state), state) end
-    end 
-    return nothing
+Base.iterate(self::Slots, state=self.data) = let  #TODO it'd be faster to keep peeled slots.data in state rather than the index 
+    if state == 0x0000 return nothing end 
+    zero_count = trailing_zeros(state) 
+    mask = ~( 0x001 << u16(zero_count) )
+    newstate::u16 = state & mask # force off
+    return ( Slot(zero_count), newstate) 
 end
 
 Base.eltype(::Type{Slots}) = Slot 
@@ -569,7 +569,7 @@ function build_cache!(self::App) # = let
                                     total_ev_for_selection = 0.f0 
                                     outcomes_arrangements_count = 0.f0 
                                     @inbounds outcomes = outcomes_for_selection(selection) 
-                                    (i,) = size(outcomes)
+                                    i = length(outcomes)
                                     while !(i==0)  # while loops easier to profile than for loops for critical hot code 
                                         @inbounds roll_outcome = outcomes[i]
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
