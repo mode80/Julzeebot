@@ -514,7 +514,8 @@ function build_cache!(self::App) # = let
                                     # find the collective ev for the all the slots with this iteration's slot being first 
                                     # do this by summing the ev for the first (head) slot with the ev value that we look up for the remaining (tail) slots
                                     rolls_remaining_now = 0
-                                    for (i, slots_piece) in enumerate(unique([head,tail]))
+                                    headtail_or_just_head = ifelse(head.data==tail.data, [head], [head,tail])
+                                    for (i, slots_piece) in enumerate(headtail_or_just_head)
                                         upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0)# TODO lookup table for best_upper_total? # only relevant totals are cached
                                         state_to_get = GameState(
                                             dievals_or_placeholder,
@@ -577,11 +578,10 @@ function build_cache!(self::App) # = let
                                             next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
                                             yahtzee_bonus_available, 
                                         )
-                                        id = state_to_get.id
-                                        @inbounds cache_entry = self.ev_cache[id]
-                                        ev_for_this_selection_outcome = cache_entry.ev 
+                                        @inbounds cache_entry = self.ev_cache[state_to_get.id]
+                                        ev_for_this_outcome = cache_entry.ev 
                                         arrangements = roll_outcome.arrangements
-                                        total_ev_for_selection += ev_for_this_selection_outcome * arrangements # bake into upcoming average
+                                        total_ev_for_selection = ev_for_this_outcome * arrangements + total_ev_for_selection  # bake into upcoming average 
                                         outcomes_arrangements_count += arrangements # we loop through die "combos" but we'll average all "perumtations"
                                     end 
                                     avg_ev_for_selection = total_ev_for_selection / outcomes_arrangements_count
@@ -750,8 +750,8 @@ function main()
     game = GameState( 
         # DieVals(3,4,4,6,6),
         DieVals(0),
-        Slots([1,2,3,4,5]),
-        # Slots([1,2,8,9,10,11,12,13]),
+        # Slots([1,2,3,4,5]),
+        Slots([1,2,8,9,10,11,12,13]),
         # Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
         # Slots([6,12]),
         # Slots([6,8,12]), 
