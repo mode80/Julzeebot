@@ -503,19 +503,18 @@ function build_cache!(self::App) # = let
                                     first_dieval::u8 = dieval_combo[1]
                                     joker_rules_matter = joker_rules_in_play && score_yahtzee(dieval_combo)>0 && has(slots,first_dieval)
                                     head_slot::Slot = ifelse(joker_rules_matter , first_dieval , slot)
-                                    head = Slots([head_slot])
 
                                     yahtzee_bonus_avail_now = yahtzee_bonus_available
                                     upper_total_now::u8 = upper_total
                                     dievals_or_placeholder = dieval_combo
-                                    tail = ifelse(slots_len>1, remove(slots,head_slot), head )# make the tail all but the head, or else just the head  
                                     head_plus_tail_ev = 0.0
-    
+                                    rolls_remaining_now = 0
+   
                                     # find the collective ev for the all the slots with this iteration's slot being first 
                                     # do this by summing the ev for the first (head) slot with the ev value that we look up for the remaining (tail) slots
-                                    rolls_remaining_now = 0
-                                    headtail_or_just_head = ifelse(head.data==tail.data, [head], [head,tail])
-                                    for (i, slots_piece) in enumerate(headtail_or_just_head)
+                                    passes = slots_len==1 ? 1 : 2
+                                    for i in 1:passes
+                                        slots_piece = ifelse(i==1 , Slots([head_slot]) , remove(slots,head_slot))  # work on the head only or the set of slots without the head
                                         upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0)# TODO lookup table for best_upper_total? # only relevant totals are cached
                                         state_to_get = GameState(
                                             dievals_or_placeholder,
@@ -524,9 +523,8 @@ function build_cache!(self::App) # = let
                                             rolls_remaining_now, 
                                             yahtzee_bonus_avail_now,
                                         )
-                                        # cache = ifelse(slots_piece==head , leaf_cache , self.ev_cache) #TODO why need leaf_cache separate from main? how is this shared state read from multi threads??
                                         choice_ev = self.ev_cache[state_to_get.id]
-                                        if i==1 #on the first pass only..  
+                                        if i==1 && slots_len > 1 #prep 2nd pass on relevant 1st pass only..  
                                             #going into tail slots next, we may need to adjust the state based on the head choice
                                             if choice_ev.choice <= SIXES  # adjust upper total for the next pass 
                                                 added = Int(choice_ev.ev % 100) # the modulo 100 here removes any yathzee bonus from ev since that doesnt' count toward upper bonus total
@@ -538,14 +536,16 @@ function build_cache!(self::App) # = let
                                             dievals_or_placeholder= placeholder_dievals # for 3 rolls remaining, use "wildcard" representative dievals since dice don't matter when rolling all of them
                                         end 
                                         head_plus_tail_ev += choice_ev.ev
-                                    end #for slot_piece
-                                    if head_plus_tail_ev >= slot_choice_ev.ev #TODO optimize with > instead of >= 
+                                    end #for i in passes 
+
+                                    if head_plus_tail_ev >= slot_choice_ev.ev #TODO optimize with > instead of >= ?
                                         slot_choice_ev = ChoiceEV(slot, head_plus_tail_ev)
                                     end
                                     
                                     if joker_rules_matter break end # if joker-rules-matter we were forced to choose one slot, so we can skip trying the rest  
-                                end  
-                                
+
+                                end #for slot in slots                               
+
                                 state_to_set = GameState(
                                     dieval_combo,
                                     slots,
@@ -748,16 +748,17 @@ const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13
 function main() 
     
     game = GameState( 
-        # DieVals(3,4,4,6,6),
-        DieVals(0),
-        # Slots([1,2,3,4,5]),
-        Slots([1,2,8,9,10,11,12,13]),
-        # Slots([1,2,3,4,5,6,7,8,9,10,11,12,13]),
-        # Slots([6,12]),
-        # Slots([6,8,12]), 
-        # Slots([12]),
-        # 0, 2, false
-        0, 3, false
+        # DieVals(1,2,3,5,6),
+        DieVals(3,4,4,6,6),
+        # DieVals(0),
+        # Slots(1,2,3,4,5),
+        # Slots(1,2,8,9,10,11,12,13),
+        # Slots(1,2,3,4,5,6,7,8,9,10,11,12,13),
+        Slots([6,12]),
+        # Slots(6,8,12), 
+        # Slots(12),
+        0, 2, false
+        # 0, 3, false
     )
     app = App(game)
     build_cache!(app)
