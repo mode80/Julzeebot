@@ -569,7 +569,8 @@ function build_cache!(self::App) # = let
                                     total_ev_for_selection = 0.0 
                                     outcomes_arrangements_count::Int = 0 
                                     @inbounds outcomes = outcomes_for_selection(selection) 
-                                    for i in 1:length(outcomes) # we'll try each selection against this starting dice combo  # this form of loop avoids check_bounds
+                                    i = length(outcomes)
+                                    while i!=0  # while loops easier to profile than for loops for critical hot code 
                                         @inbounds roll_outcome = outcomes[i]
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
                                         @inbounds sorted_dievals::DieVals = SORTED_DIEVALS[newvals.data].dievals 
@@ -585,6 +586,7 @@ function build_cache!(self::App) # = let
                                         arrangements = roll_outcome.arrangements
                                         total_ev_for_selection = ev_for_this_outcome * arrangements + total_ev_for_selection  # bake into upcoming average 
                                         outcomes_arrangements_count += arrangements # we loop through die "combos" but we'll average all "perumtations"
+                                        i-=1
                                     end 
                                     avg_ev_for_selection = total_ev_for_selection / outcomes_arrangements_count
                                     if avg_ev_for_selection > best_dice_choice_ev.ev
@@ -739,7 +741,7 @@ function main()
         DieVals(3,4,4,6,6),
         # DieVals(0),
         # Slots(1,2,3,4,5),
-        Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
+        Slots(0x1,0x2,0x3,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(SIXES,YAHTZEE),
         # Slots(0x6,0x8,0xc), 
