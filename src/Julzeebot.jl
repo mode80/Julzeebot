@@ -100,7 +100,7 @@ Base.hash(self::Slots, h::UInt) = hash(self.data,h)
 
 Base.isequal(self::Slots, other::Slots) = isequal(self.data, other.data)
 
-Base.iterate(self::Slots, state=0) = let 
+Base.iterate(self::Slots, state=0) = let  #TODO it'd be faster to keep peeled slots.data in state rather than the index 
     while state < 13 
         state+=1
         if has(self,state) return (Slot(state), state) end
@@ -165,8 +165,8 @@ end
 #         self.data &= mask # force off
 #     end
 
-previously_used_upper_slots(self::Slots) ::Slots = let
-    all_bits_except_unused_uppers = ~self.data # "unused" slots (as encoded in .data) are not "previously used", so blank those out
+used_upper_slots(unused_slots::Slots) ::Slots = let
+    all_bits_except_unused_uppers = ~unused_slots.data # "unused" slots (as encoded in .data) are not "previously used", so blank those out
     all_upper_slot_bits = u16((1<<7)-2)  # upper slot bits are those from 2^1 through 2^6 (.data encoding doesn't use 2^0)
     previously_used_upper_slot_bits = all_bits_except_unused_uppers & all_upper_slot_bits
     return Slots( previously_used_upper_slot_bits )
@@ -185,19 +185,33 @@ const UPPER_SCORES = (
 """ returns the unique and relevant "upper bonus total" that could have occurred from the previously used upper slots """
 relevant_upper_totals(slots::Slots) :: Vector{u8} = let # TODO switch to this simplified version in the Rust implmentation for fairness?
     totals = Set(u8[])
-    used_slot_idxs = previously_used_upper_slots(slots)
-    slots_vals = [UPPER_SCORES[i] for i in used_slot_idxs] 
-    used_score_perms = Iterators.product(slots_vals...)
+    used_slots = used_upper_slots(slots)
+    slots_val_sets = [UPPER_SCORES[i] for i in used_slots] 
+    used_score_perms = Iterators.product(slots_val_sets...)
     for perm in used_score_perms # TODO this is a wasteful approach that isn't much impact on pref but allocates unneeded GBs 
         tot = sum( perm; init=0 )
         push!(totals, min(tot,63) )
     end 
     push!(totals,0) # 0 is always relevant and must be added here explicitly when there are no used upper slots 
 
-    # filter out the lower totals that aren't relevant because they can't be reached by the upper slots remaining 
-    # this filters out a lot of unneeded state space but means the lookup function must map extraneous deficits to a default 
+    # filter out the lower totals that aren't relevant because they can't reach the goal with the upper slots remaining 
+    # this filters out a lot of dead state space but means the lookup function must later map extraneous deficits to a default 
     best_current_slot_total = best_upper_total(slots)
     [x for x in totals if x==0 || x + best_current_slot_total >=63]
+end
+
+# a non-exact but fast estimate of relevant_upper_totals
+useful_upper_totals(all_unused_slots::Slots) = let 
+    possible_totals = (x for x in 0:63)
+    used_uppers = used_upper_slots(all_unused_slots)
+    if all(iseven,used_uppers) possible_totals = (x for x in possible_totals if iseven(x)) end
+    # filter out the highish totals that can't be reached by the current unused upper slots 
+    best_unused_slot_total = best_upper_total(all_unused_slots)
+    possible_totals = (x for x in possible_totals if x<=best_unused_slot_total) 
+    # filter out the lowish totals that aren't relevant because they can't reach the goal with the upper slots remaining 
+    # this filters out a lot of dead state space but means the lookup function must later map extraneous deficits to a default 
+    possible_totals = (x for x in possible_totals if x + best_unused_slot_total >=63 || x==0)
+    return possible_totals
 end
 
 best_upper_total(self::Slots) ::u8 = let
@@ -268,7 +282,7 @@ counts(self::GameState) :: Tuple{Int,Int} = let
         for slots_vec in combinations( collect(self.open_slots), subset_len )  
             slots = Slots(slots_vec...)
             joker_rules = has(slots,YAHTZEE) # yahtzees aren't wild whenever yahtzee slot is still available 
-            totals = relevant_upper_totals(slots) 
+            totals = useful_upper_totals(slots) 
             for _ in totals 
                 for __ in unique([false,joker_rules]) #
                     slot_lookups = (subset_len * ifelse(subset_len==1, 1, 2) ) * 252 #// * subset_len as u64;
@@ -437,7 +451,7 @@ function build_cache!(self::App) # = let
         slot = Slots(Slot(single_slot)) # set of a single slot 
         joker_rules_in_play = single_slot!=YAHTZEE # joker rules in effect when the yahtzee slot is not open 
         for yahtzee_bonus_available in unique([false, joker_rules_in_play])  # yahtzee bonus -might- be available when joker rules are in play 
-            for upper_total in relevant_upper_totals(slot)
+            for upper_total in useful_upper_totals(slot)
                 for dieval_combo in all_dieval_combos
                     state = GameState(
                         dieval_combo, 
@@ -461,7 +475,7 @@ function build_cache!(self::App) # = let
             joker_rules_in_play = !has(slots,YAHTZEE) # joker rules are in effect whenever the yahtzee slot is already filled 
 
             # for each upper total 
-            for upper_total::u8 in relevant_upper_totals(slots) 
+            for upper_total::u8 in useful_upper_totals(slots) 
 
                 # for each yathzee bonus possibility 
                 for yahtzee_bonus_available::u8 in unique([false,joker_rules_in_play]) # bonus always unavailable unless yahtzees are wild first
