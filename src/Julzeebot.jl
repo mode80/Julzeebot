@@ -238,12 +238,13 @@ GameState
 -------------------------------------------------------------=#
 
 struct GameState # TODO test impact of calling keyword funcs are bad for performance https://techytok.com/code-optimisation-in-julia/#keyword-arguments 
-    id :: GameStateID # 30 bits # with the id, we can store all of this in a sparse array using 2^(8+13+6+2+1)/(1024^2*8)=128mb
-    sorted_dievals ::DieVals # 15 bits OR 8 as DieValID (252 possibilities)
-    open_slots ::Slots # 13 bits 
-    upper_total ::u8 # = 6 bits 
-    rolls_remaining ::u8 # = 2 bits 
-    yahtzee_bonus_avail ::Bool # = 1 bit 
+    id :: GameStateID # 30 bits # with the id, 
+    #we can store all of below in a sparse array using 2^(8+13+6+2+1) entries = 1_073_741_824 entries = 5.2GB when storing 40bit ResultEVs 
+    sorted_dievals ::DieVals # 15 bits OR 8 bits once convereted to a DieValID (252 possibilities)
+    open_slots ::Slots # 13 bits        = 8_192 possibilities
+    upper_total ::u8 # = 6 bits         = 64    "
+    rolls_remaining ::u8 # = 2 bits     = 4     "  
+    yahtzee_bonus_avail ::Bool # = 1bit = 2     "
     GameState(sorted_dievals, open_slots, upper_total, rolls_remaining, yahtzee_bonus_avail) = let 
         @inbounds dievals_id::u32 = SORTED_DIEVALS[sorted_dievals.data].id # this is the 8-bit encoding of self.sorted_dievals
         id= dievals_id |                 # self.id will use 30 bits total...
@@ -406,10 +407,10 @@ score_yahtzee(sorted_dievals) ::u8 =
 # reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
 score_slot_with_dice(slot, sorted_dievals) ::u8 = @inbounds SCORE_FNS[slot](sorted_dievals) 
 
-const SCORE_FNS = [
+const SCORE_FNS = (
     score_aces, score_twos, score_threes, score_fours, score_fives, score_sixes, 
     score_three_of_a_kind, score_four_of_a_kind, score_fullhouse, score_sm_str8, score_lg_str8, score_yahtzee, score_chance, 
-]
+)
 
 #=-------------------------------------------------------------
 APP
@@ -569,7 +570,7 @@ function build_cache!(self::App) # = let
                                     total_ev_for_selection = 0.f0 
                                     outcomes_arrangements_count = 0.f0 
                                     @inbounds outcomes = outcomes_for_selection(selection) 
-                                    i = length(outcomes)
+                                    i::Int = length(outcomes)
                                     while !(i==0)  # while loops easier to profile than for loops for critical hot code 
                                         @inbounds roll_outcome = outcomes[i]
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
@@ -740,13 +741,14 @@ function main()
         # DieVals(1,2,3,5,6),
         DieVals(3,4,4,6,6),
         # DieVals(0),
-        # Slots(1,2,3,4,5),
+        # Slots(0x1,0x2,0x3,0x4,0x5),
         # Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
-        Slots(0x1,0x2,0x3,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
+        # Slots(0x1,0x2,0x3,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(SIXES,YAHTZEE),
         # Slots(0x6,0x8,0xc), 
         # Slots(12),
+        Slots(0x3, FOURS, FIVES, SIXES, CHANCE, FULL_HOUSE, YAHTZEE, SM_STRAIGHT, LG_STRAIGHT, THREE_OF_A_KIND, FOUR_OF_A_KIND),
         0, 2, false
         # 0, 3, false
     )
