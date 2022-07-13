@@ -47,14 +47,6 @@ end
 
 DieVals() = DieVals(0) 
 
-DieVals(from ::NTuple{5,T} ) where {T} = let
-    DieVals(from...)
-end
-
-DieVals(from ::Vector{T} ) where {T} = let
-    DieVals(from...)
-end
-
 DieVals(d1::T, d2::T, d3::T, d4::T, d5::T) where {T} = let 
     DieVals(u16(d5) << 12 | u16(d4) << 9 | u16(d3) << 6 | u16(d2) << 3 | u16(d1))
 end
@@ -95,18 +87,14 @@ struct Slots <: AbstractArray{Slot, 1}
     data::u16 # 13 sorted Slots can be positionally encoded in one u16
 end
 
-Slots(v::Vector) = let 
-    # @assert(length(v) <= 13)
+Slots(args::Slot...) = let  #be careful about dispatching to the wrong constructor for single slots (must use slot of type Slot)
     data = 0
-    for slot in v 
-        mask = 1 << slot
+    for slot in args 
+        mask = u16(1) << slot
         data |= mask # force on
     end
-    # for x in iterable; insert!(retval, x); end  
-    return Slots(data) 
+    Slots(data) 
 end
-
-Base.convert(::Type{Slots}, v::Vector) = Slots(v)
 
 Base.hash(self::Slots, h::UInt) = hash(self.data,h)
 
@@ -243,7 +231,7 @@ struct GameState # TODO test impact of calling keyword funcs are bad for perform
     rolls_remaining ::u8 # = 2 bits 
     yahtzee_bonus_avail ::Bool # = 1 bit 
     GameState(sorted_dievals, open_slots, upper_total, rolls_remaining, yahtzee_bonus_avail) = let 
-        dievals_id::u32 = SORTED_DIEVALS[sorted_dievals.data].id # this is the 8-bit encoding of self.sorted_dievals
+        @inbounds dievals_id::u32 = SORTED_DIEVALS[sorted_dievals.data].id # this is the 8-bit encoding of self.sorted_dievals
         id= dievals_id |                 # self.id will use 30 bits total...
             (u32(open_slots.data)    << 7)  | # slots.data doesn't use its rightmost bit so we only shift 7 to make room for the 8-bit dieval_id above 
             (u32(upper_total)        << 21) | # make room for 13+8 bit stuff above 
@@ -278,7 +266,7 @@ counts(self::GameState) :: Tuple{Int,Int} = let
     saves = 0 
     for subset_len in 1:length(self.open_slots)
         for slots_vec in combinations( collect(self.open_slots), subset_len )  
-            slots = Slots(slots_vec)
+            slots = Slots(slots_vec...)
             joker_rules = has(slots,YAHTZEE) # yahtzees aren't wild whenever yahtzee slot is still available 
             totals = relevant_upper_totals(slots) 
             for _ in totals 
@@ -402,7 +390,7 @@ score_yahtzee(sorted_dievals) ::u8 =
     (sorted_dievals[1] == sorted_dievals[5] != 0) ? 50 : 0 
 
 # reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
-score_slot_with_dice(slot, sorted_dievals) ::u8 = SCORE_FNS[slot](sorted_dievals) 
+score_slot_with_dice(slot, sorted_dievals) ::u8 = @inbounds SCORE_FNS[slot](sorted_dievals) 
 
 const SCORE_FNS = [
     score_aces, score_twos, score_threes, score_fours, score_fives, score_sixes, 
@@ -441,12 +429,12 @@ BUILD_CACHE
 # gather up expected values in a multithreaded bottom-up fashion. this is like.. the main thing
 
 function build_cache!(self::App) # = let 
-    all_dieval_combos=[o.dievals for o in outcomes_for_selection(0b11111) ] # TODO backport this depature to python/rust?
+    @inbounds all_dieval_combos=[o.dievals for o in outcomes_for_selection(0b11111) ] # TODO backport this depature to python/rust?
     placeholder_dievals = DieVals(0) 
 
     # first handle special case of the most leafy leaf calcs -- where there's one slot left and no rolls remaining
     for single_slot in self.game.open_slots   
-        slot = Slots([single_slot]) # set of a single slot 
+        slot = Slots(Slot(single_slot)) # set of a single slot 
         joker_rules_in_play = single_slot!=YAHTZEE # joker rules in effect when the yahtzee slot is not open 
         for yahtzee_bonus_available in unique([false, joker_rules_in_play])  # yahtzee bonus -might- be available when joker rules are in play 
             for upper_total in relevant_upper_totals(slot)
@@ -469,7 +457,7 @@ function build_cache!(self::App) # = let
 
         # for each slotset (of above length)
         for slots_vec in combinations(self.game.open_slots, slots_len) 
-            slots::Slots = Slots(slots_vec)
+            slots::Slots = Slots(slots_vec...)
             joker_rules_in_play = !has(slots,YAHTZEE) # joker rules are in effect whenever the yahtzee slot is already filled 
 
             # for each upper total 
@@ -514,7 +502,7 @@ function build_cache!(self::App) # = let
                                     # do this by summing the ev for the first (head) slot with the ev value that we look up for the remaining (tail) slots
                                     passes = slots_len==1 ? 1 : 2
                                     for i in 1:passes
-                                        slots_piece = ifelse(i==1 , Slots([head_slot]) , remove(slots,head_slot))  # work on the head only or the set of slots without the head
+                                        slots_piece = ifelse(i==1 , Slots(Slot(head_slot)) , remove(slots,head_slot))  # work on the head only or the set of slots without the head
                                         upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0)# TODO lookup table for best_upper_total? # only relevant totals are cached
                                         state_to_get = GameState(
                                             dievals_or_placeholder,
@@ -563,13 +551,13 @@ function build_cache!(self::App) # = let
                                 next_roll::u8 = rolls_remaining-1 
                                 best_dice_choice_ev = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
                                 selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
-                                for selection in selections  # we'll try each selection against this starting dice combo  
+                                for selection in selections # we'll try each selection against this starting dice combo  
                                     total_ev_for_selection = 0.0 
-                                    outcomes_arrangements_count = 0 
+                                    outcomes_arrangements_count::Int = 0 
                                     outcomes = outcomes_for_selection(selection) 
-                                    for roll_outcome in outcomes 
+                                    for i in 1:length(outcomes) # we'll try each selection against this starting dice combo  # this form of loop avoids check_bounds
+                                        @inbounds roll_outcome = outcomes[i]
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
-                                        # newvals = sorted[&newvals]; 
                                         @inbounds sorted_dievals::DieVals = SORTED_DIEVALS[newvals.data].dievals 
                                         state_to_get = GameState(
                                             sorted_dievals, 
@@ -636,7 +624,7 @@ sorted_dievals() ::OffsetVector{DieValsID} = begin
     vec[DieVals(0).data] = DieValsID(DieVals(0),0x0) # first one is for the special wildcard 
     for (i,combo) in enumerate( with_replacement_combinations(1:6,5) )
         for perm in permutations(combo,5) |> unique 
-            vec[DieVals(perm).data] = DieValsID(DieVals(combo),i)
+            vec[DieVals(perm...).data] = DieValsID(DieVals(combo...),i)
         end 
     end
     return vec
@@ -693,8 +681,8 @@ all_selection_outcomes() ::Vector{Outcome} = let
             end 
             arrangements = distinct_arrangements_for(dievals_combo_vec)
             retval[i]=Outcome(
-                DieVals(dievals_vec),
-                DieVals(mask_vec),
+                DieVals(dievals_vec...),
+                DieVals(mask_vec...),
                 arrangements
             )
         end 
@@ -716,10 +704,10 @@ distinct_arrangements_for(dieval_vec) ::u8 = let #(dieval_vec:Vec<DieVal>)->u8{
 end 
 
 # returns a slice from the precomputed dice roll outcomes that corresponds to the given selection bitfield """
-Base.@propagate_inbounds function outcomes_for_selection(selection::Selection) #(selection:u8)->&'static [Outcome]{
+Base.@propagate_inbounds function outcomes_for_selection(selection::Selection) #(selection:u9)->&'static [Outcome]{
     one_based_idx = selection + 1 # selection bitfield is 0 to 31 but Julia indexes are from 1 to 32
-    @inbounds idx = RANGE_IDX_FOR_SELECTION[one_based_idx]
-    @inbounds range = SELECTION_RANGES[idx]
+    idx = RANGE_IDX_FOR_SELECTION[one_based_idx]
+    range = SELECTION_RANGES[idx]
     view(OUTCOMES,range)
 end
 
@@ -730,21 +718,6 @@ const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13
 # const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # mapping used in Rust and Python impls after 1-basing
 # const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32] # straight mapping  #TODO somehow these all work?
 
-# function sorted_dieval_ids() ::Vector{u8}  
-#     vec = Vector{DieVals}(undef,0:251)
-#     for (i, outcome) in enumerate(outcomes_for_selection(0b11111))
-#         vec[i] = outcome.dievals
-#     end
-#     vec[DieVals(0).data] = DieVals(0) # first one is for the special wildcard 
-#     for (_,combo) in enumerate( with_replacement_combinations(1:6,5) )
-#         for perm in permutations(combo,5) |> unique 
-#             vec[DieVals(perm).data] = DieVals(combo)
-#         end 
-#     end
-#     return vec
-# end
-# const SORTED_DIEVAL_IDS = sorted_dieval_ids()
-
 function main() 
     
     game = GameState( 
@@ -752,10 +725,10 @@ function main()
         DieVals(3,4,4,6,6),
         # DieVals(0),
         # Slots(1,2,3,4,5),
-        # Slots(1,2,8,9,10,11,12,13),
+        Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(1,2,3,4,5,6,7,8,9,10,11,12,13),
-        Slots([6,12]),
-        # Slots(6,8,12), 
+        # Slots(SIXES,YAHTZEE),
+        # Slots(0x6,0x8,0xc), 
         # Slots(12),
         0, 2, false
         # 0, 3, false
