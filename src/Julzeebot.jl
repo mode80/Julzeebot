@@ -230,7 +230,7 @@ Outcome
 struct Outcome  
     dievals::DieVals
     mask::DieVals # stores a pre-made mask for blitting this outcome onto a GameState.DieVals.data u16 later
-    arrangements::u8  # how many indistinguisable ways can these dievals be arranged (ie swapping identical dievals)
+    arrangements::f64  # how many indistinguisable ways can these dievals be arranged (ie swapping identical dievals)
 end
 
 #=-------------------------------------------------------------
@@ -567,10 +567,10 @@ function build_cache!(self::App) # = let
                                 selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
                                 for selection in selections # we'll try each selection against this starting dice combo  
                                     total_ev_for_selection = 0.0 
-                                    outcomes_arrangements_count::Int = 0 
+                                    outcomes_arrangements_count = 0.0 
                                     @inbounds outcomes = outcomes_for_selection(selection) 
                                     i = length(outcomes)
-                                    while i!=0  # while loops easier to profile than for loops for critical hot code 
+                                    while !(i==0)  # while loops easier to profile than for loops for critical hot code 
                                         @inbounds roll_outcome = outcomes[i]
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
                                         @inbounds sorted_dievals::DieVals = SORTED_DIEVALS[newvals.data].dievals 
@@ -741,7 +741,8 @@ function main()
         DieVals(3,4,4,6,6),
         # DieVals(0),
         # Slots(1,2,3,4,5),
-        Slots(0x1,0x2,0x3,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
+        Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
+        # Slots(0x1,0x2,0x3,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(SIXES,YAHTZEE),
         # Slots(0x6,0x8,0xc), 
