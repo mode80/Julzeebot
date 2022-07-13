@@ -34,7 +34,7 @@ ChoiceEV
 -------------------------------------------------------------=#
 struct ChoiceEV 
     choice::Choice
-    ev::Float32
+    ev::f32
 end
 
 
@@ -90,7 +90,7 @@ end
 Slots(args::Slot...) = let  #be careful about dispatching to the wrong constructor for single slots (must use slot of type Slot)
     data = 0
     for slot in args 
-        mask = u16(1) << slot
+        mask = 0x0001 << slot
         data |= mask # force on
     end
     Slots(data) 
@@ -136,7 +136,7 @@ end
 # end
 
 has(slots::Slots, slot) ::Bool = let
-    slots.data & (1<<slot) > 0
+    0x0000 < slots.data & (0x0001<<u16(slot))  
 end
 
 # insert!(self::SortedSlots, slots... ) = let
@@ -217,7 +217,7 @@ end
 best_upper_total(self::Slots) ::u8 = let
     sum=0
     for x in self  
-        if x>6 break end
+        if 6<x break end
         sum+=x
     end
     sum*5
@@ -230,7 +230,7 @@ Outcome
 struct Outcome  
     dievals::DieVals
     mask::DieVals # stores a pre-made mask for blitting this outcome onto a GameState.DieVals.data u16 later
-    arrangements::f64  # how many indistinguisable ways can these dievals be arranged (ie swapping identical dievals)
+    arrangements::f32  # how many indistinguisable ways can these dievals be arranged (ie swapping identical dievals)
 end
 
 #=-------------------------------------------------------------
@@ -509,7 +509,7 @@ function build_cache!(self::App) # = let
                                     yahtzee_bonus_avail_now = yahtzee_bonus_available
                                     upper_total_now::u8 = upper_total
                                     dievals_or_placeholder = dieval_combo
-                                    head_plus_tail_ev = 0.0
+                                    head_plus_tail_ev = 0.f0
                                     rolls_remaining_now = 0
    
                                     # find the collective ev for the all the slots with this iteration's slot being first 
@@ -517,7 +517,7 @@ function build_cache!(self::App) # = let
                                     passes = slots_len==1 ? 1 : 2
                                     for i in 1:passes
                                         slots_piece = ifelse(i==1 , Slots(Slot(head_slot)) , remove(slots,head_slot))  # work on the head only or the set of slots without the head
-                                        upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0)# TODO lookup table for best_upper_total? # only relevant totals are cached
+                                        upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 0x3f #=63=# , upper_total_now , 0x0)# TODO lookup table for best_upper_total? # only relevant totals are cached
                                         state_to_get = GameState(
                                             dievals_or_placeholder,
                                             slots_piece, 
@@ -532,7 +532,7 @@ function build_cache!(self::App) # = let
                                                 added = Int(choice_ev.ev % 100) # the modulo 100 here removes any yathzee bonus from ev since that doesnt' count toward upper bonus total
                                                 upper_total_now = min(63, upper_total_now + added);
                                             elseif choice_ev.choice==YAHTZEE  # adjust yahtzee related state for the next pass
-                                                if choice_ev.ev>0.0 yahtzee_bonus_avail_now=true end
+                                                if choice_ev.ev>0.f0 yahtzee_bonus_avail_now=true end
                                             end 
                                             rolls_remaining_now=3 # for upcoming tail lookup, we always want the ev for 3 rolls remaining
                                             dievals_or_placeholder= placeholder_dievals # for 3 rolls remaining, use "wildcard" representative dievals since dice don't matter when rolling all of them
@@ -566,22 +566,22 @@ function build_cache!(self::App) # = let
                                 best_dice_choice_ev = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
                                 selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
                                 for selection in selections # we'll try each selection against this starting dice combo  
-                                    total_ev_for_selection = 0.0 
-                                    outcomes_arrangements_count = 0.0 
+                                    total_ev_for_selection = 0.f0 
+                                    outcomes_arrangements_count = 0.f0 
                                     @inbounds outcomes = outcomes_for_selection(selection) 
-                                    i = length(outcomes)
+                                    (i,) = size(outcomes)
                                     while !(i==0)  # while loops easier to profile than for loops for critical hot code 
                                         @inbounds roll_outcome = outcomes[i]
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
-                                        @inbounds sorted_dievals::DieVals = SORTED_DIEVALS[newvals.data].dievals 
+                                        @inbounds (; dievals, id) = SORTED_DIEVALS[Int(newvals.data)]
                                         state_to_get = GameState(
-                                            sorted_dievals, 
+                                            dievals, 
                                             slots, 
                                             upper_total, 
                                             next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
                                             yahtzee_bonus_available, 
                                         )
-                                        @inbounds cache_entry = self.ev_cache[state_to_get.id]
+                                        @inbounds cache_entry = self.ev_cache[Int(state_to_get.id)]
                                         ev_for_this_outcome = cache_entry.ev 
                                         arrangements = roll_outcome.arrangements
                                         total_ev_for_selection = ev_for_this_outcome * arrangements + total_ev_for_selection  # bake into upcoming average 
@@ -741,8 +741,8 @@ function main()
         DieVals(3,4,4,6,6),
         # DieVals(0),
         # Slots(1,2,3,4,5),
-        Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
-        # Slots(0x1,0x2,0x3,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
+        # Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
+        Slots(0x1,0x2,0x3,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(SIXES,YAHTZEE),
         # Slots(0x6,0x8,0xc), 
