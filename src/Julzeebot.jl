@@ -568,7 +568,7 @@ function build_cache!(self::App) # = let
                                 for selection in selections # we'll try each selection against this starting dice combo  
                                     total_ev_for_selection = 0.0 
                                     outcomes_arrangements_count::Int = 0 
-                                    outcomes = outcomes_for_selection(selection) 
+                                    @inbounds outcomes = outcomes_for_selection(selection) 
                                     for i in 1:length(outcomes) # we'll try each selection against this starting dice combo  # this form of loop avoids check_bounds
                                         @inbounds roll_outcome = outcomes[i]
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
@@ -722,7 +722,7 @@ Base.@propagate_inbounds function outcomes_for_selection(selection::Selection) #
     one_based_idx = selection + 1 # selection bitfield is 0 to 31 but Julia indexes are from 1 to 32
     idx = RANGE_IDX_FOR_SELECTION[one_based_idx]
     range = SELECTION_RANGES[idx]
-    view(OUTCOMES,range)
+    @inbounds view(OUTCOMES,range)
 end
 
 const SELECTION_RANGES = selection_ranges()  
@@ -740,7 +740,7 @@ function main()
         # DieVals(0),
         # Slots(1,2,3,4,5),
         Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
-        # Slots(1,2,3,4,5,6,7,8,9,10,11,12,13),
+        # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(SIXES,YAHTZEE),
         # Slots(0x6,0x8,0xc), 
         # Slots(12),
