@@ -202,16 +202,16 @@ end
 
 # a non-exact but fast estimate of relevant_upper_totals
 useful_upper_totals(all_unused_slots::Slots) = let 
-    possible_totals = (x for x in 0:63)
+    totals = (x for x in 0:63)
     used_uppers = used_upper_slots(all_unused_slots)
-    if all(iseven,used_uppers) possible_totals = (x for x in possible_totals if iseven(x)) end
-    # filter out the highish totals that can't be reached by the current unused upper slots 
-    best_unused_slot_total = best_upper_total(all_unused_slots)
-    possible_totals = (x for x in possible_totals if x<=best_unused_slot_total) 
+    if all(iseven,used_uppers) 
+        totals = (x for x in totals if iseven(x)) 
+    end
     # filter out the lowish totals that aren't relevant because they can't reach the goal with the upper slots remaining 
     # this filters out a lot of dead state space but means the lookup function must later map extraneous deficits to a default 
-    possible_totals = (x for x in possible_totals if x + best_unused_slot_total >=63 || x==0)
-    return possible_totals
+    best_unused_slot_total = best_upper_total(all_unused_slots)
+    totals = (x for x in totals if x + best_unused_slot_total >=63 || x==0)
+    return totals
 end
 
 best_upper_total(self::Slots) ::u8 = let
@@ -302,7 +302,7 @@ score_first_slot_in_context(self::GameState) ::u8 = let
 
     # add upper bonus when needed total is reached */
         if slot<=SIXES && self.upper_total>0  
-            new_deficit = max(0,self.upper_total - score)
+            new_deficit = max(0,Int(self.upper_total) - Int(score)) # cast with signed Int first to avoid wrapping subtraction
             if new_deficit==0 score += 35 end
         end  
 
@@ -742,13 +742,13 @@ function main()
         DieVals(3,4,4,6,6),
         # DieVals(0),
         # Slots(0x1,0x2,0x3,0x4,0x5),
-        # Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
+        Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x1,0x2,0x3,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(SIXES,YAHTZEE),
         # Slots(0x6,0x8,0xc), 
         # Slots(12),
-        Slots(0x3, FOURS, FIVES, SIXES, CHANCE, FULL_HOUSE, YAHTZEE, SM_STRAIGHT, LG_STRAIGHT, THREE_OF_A_KIND, FOUR_OF_A_KIND),
+        # Slots(0x3, FOURS, FIVES, SIXES, CHANCE, FULL_HOUSE, YAHTZEE, SM_STRAIGHT, LG_STRAIGHT, THREE_OF_A_KIND, FOUR_OF_A_KIND),
         0, 2, false
         # 0, 3, false
     )
