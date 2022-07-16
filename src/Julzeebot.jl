@@ -1,3 +1,4 @@
+# module Julzeebot
 # import StaticArrays: SVector
 import Combinatorics: permutations, with_replacement_combinations, combinations, powerset
 import DataStructures: counter
@@ -8,6 +9,13 @@ using ProgressMeter
 using Test
 using Infiltrator
 using OffsetArrays
+
+# # ExportAll https://discourse.julialang.org/t/exportall/4970/2
+# for n in names(@__MODULE__; all=true)
+#     if Base.isidentifier(n) && n ∉ (Symbol(@__MODULE__), :eval, :include)
+#         @eval export $n
+#     end
+# end
 
 #=-------------------------------------------------------------
 CONSTS, UTILS
@@ -296,14 +304,16 @@ end
  
 score_first_slot_in_context(self::GameState) ::u8 = let
 
-    # score slot itself w/o regard to game state */
+    # score slot itself w/o regard to game state 
         slot::Slot, _ = iterate(self.open_slots)
         score = score_slot_with_dice(slot, self.sorted_dievals) 
 
-    # add upper bonus when needed total is reached */
-        if slot<=SIXES && self.upper_total>0  
-            new_deficit = max(0,Int(self.upper_total) - Int(score)) # cast with signed Int first to avoid wrapping subtraction
-            if new_deficit==0 score += 35 end
+    # add upper bonus when needed total is reached 
+        if slot<=SIXES && self.upper_total<0x3f #63
+            new_total = min(self.upper_total+score, 0x3f #=63=#) 
+            if new_total==0x3f #63 # we just reach bonus threshold
+                score += 0x23 #35  # add the 35 bonus points 
+            end
         end  
 
     # special handling of "joker rules" */
@@ -518,11 +528,12 @@ function build_cache!(self::App) # = let
                                     passes = slots_len==1 ? 1 : 2
                                     for i in 1:passes
                                         slots_piece = ifelse(i==1 , Slots(Slot(head_slot)) , remove(slots,head_slot))  # work on the head only or the set of slots without the head
-                                        upper_total_now = ifelse(upper_total_now + best_upper_total(slots_piece) >= 0x3f #=63=# , upper_total_now , 0x0)# TODO lookup table for best_upper_total? # only relevant totals are cached
+                                        upper_total_to_save = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0x0)# only relevant totals are cached
+                                        # if upper_total_now + best_upper_total(slots_piece) < 0x3f#=63=# upper_total_now = 0x0 end # map irrelevant totals to 0 when they can't reach the needed bonus threshold 
                                         state_to_get = GameState(
                                             dievals_or_placeholder,
                                             slots_piece, 
-                                            upper_total_now, 
+                                            upper_total_to_save,
                                             rolls_remaining_now, 
                                             yahtzee_bonus_avail_now,
                                         )
@@ -530,7 +541,7 @@ function build_cache!(self::App) # = let
                                         if i==1 && slots_len > 1 #prep 2nd pass on relevant 1st pass only..  
                                             #going into tail slots next, we may need to adjust the state based on the head choice
                                             if choice_ev.choice <= SIXES  # adjust upper total for the next pass 
-                                                added = Int(choice_ev.ev % 100) # the modulo 100 here removes any yathzee bonus from ev since that doesnt' count toward upper bonus total
+                                                added = u8(choice_ev.ev % 100) # the modulo 100 here removes any yathzee bonus from ev since that doesnt' count toward upper bonus total
                                                 upper_total_now = min(63, upper_total_now + added);
                                             elseif choice_ev.choice==YAHTZEE  # adjust yahtzee related state for the next pass
                                                 if choice_ev.ev>0.f0 yahtzee_bonus_avail_now=true end
@@ -739,18 +750,18 @@ function main()
     
     game = GameState( 
         # DieVals(1,2,3,5,6),
-        DieVals(3,4,4,6,6),
-        # DieVals(0),
-        # Slots(0x1,0x2,0x3,0x4,0x5),
-        Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
-        # Slots(0x1,0x2,0x3,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
-        # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd),
+        # DieVals(3,4,4,6,6),
+        DieVals(0),
+        # Slots(0x4, 0x5, 0x6),
+        # Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
+        # Slots(0x6),
+        Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd), # should yield 254.5896
         # Slots(SIXES,YAHTZEE),
         # Slots(0x6,0x8,0xc), 
         # Slots(12),
         # Slots(0x3, FOURS, FIVES, SIXES, CHANCE, FULL_HOUSE, YAHTZEE, SM_STRAIGHT, LG_STRAIGHT, THREE_OF_A_KIND, FOUR_OF_A_KIND),
-        0, 2, false
-        # 0, 3, false
+        # 60, 1, false
+        0, 3, false
     )
     app = App(game)
     build_cache!(app)
@@ -759,4 +770,7 @@ function main()
     # @assert lhs.ev ≈ 23.9   atol=0.1
 end
 
-# main()
+main()
+
+
+# end # module
