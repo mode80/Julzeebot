@@ -96,7 +96,7 @@ struct Slots <: AbstractArray{Slot, 1}
 end
 
 Slots(args::Slot...) = let  #be careful about dispatching to the wrong constructor for single slots (must use slot of type Slot)
-    data = 0
+    data::u16 = 0
     for slot in args 
         mask = 0x0001 << slot
         data |= mask # force on
@@ -287,13 +287,14 @@ Base.isequal(self::GameState, other::GameState) =
 counts(self::GameState) :: Tuple{Int,Int} = let 
     lookups = 0 
     saves = 0 
+    false_true = (true, false); just_false = (false,)
     for subset_len in 1:length(self.open_slots)
         for slots_vec in combinations( collect(self.open_slots), subset_len )  
             slots = Slots(slots_vec...)
             joker_rules = has(slots,YAHTZEE) # yahtzees aren't wild whenever yahtzee slot is still available 
             totals = useful_upper_totals(slots) 
             for _ in totals 
-                for __ in unique([false,joker_rules]) #
+                for __ in ifelse(joker_rules, false_true, just_false ) 
                     slot_lookups = (subset_len * ifelse(subset_len==1, 1, 2) ) * 252 #// * subset_len as u64;
                     dice_lookups = 848484 # // previoiusly verified by counting up by 1s in the actual loop. however chunking forward is faster 
                     lookups += dice_lookups + slot_lookups
@@ -401,12 +402,23 @@ score_lg_str8(sorted_dievals)           ::u8     = ifelse( straight_len(sorted_d
 
 # The official rule is that a Full House is "three of one number and two of another
 score_fullhouse(sorted_dievals) ::u8 = let
-    counts = counter(sorted_dievals)
-    if length(counts) != 2 return 0 end
-    (val1,val1count), state = iterate(counts)
-    (val2,val2count), _ = iterate(counts,state)
-    if val1==0 || val2==0 return 0 end
-    if (val1count==3 && val2count==2) || (val2count==3 && val1count==2) return 25 else return 0x0 end
+   
+    valcounts1 = valcounts2 = 0
+    j=0
+
+    for (i,val) in enumerate(sorted_dievals) 
+        if val==0 return 0 end
+        if (j==0 || sorted_dievals[i]!=sorted_dievals[i-1]) 
+            j+=1 
+        end
+        if j==1 valcounts1+=1 end
+        if j==2 valcounts2+=1 end
+        if j==3 return 0 end
+    end
+
+    if valcounts1==3 && valcounts2==2 || valcounts2==3 && valcounts1==2 return 25 end
+    return 0 
+
 end 
     
 score_chance(sorted_dievals) ::u8 = sum(sorted_dievals) 
@@ -415,12 +427,21 @@ score_yahtzee(sorted_dievals) ::u8 =
     (sorted_dievals[1] == sorted_dievals[5] != 0) ? 50 : 0 
 
 # reports the score for a set of dice in a given slot w/o regard for exogenous gamestate (bonuses, yahtzee wildcards etc) 
-score_slot_with_dice(slot, sorted_dievals) ::u8 = @inbounds SCORE_FNS[slot](sorted_dievals) 
-
-const SCORE_FNS = (
-    score_aces, score_twos, score_threes, score_fours, score_fives, score_sixes, 
-    score_three_of_a_kind, score_four_of_a_kind, score_fullhouse, score_sm_str8, score_lg_str8, score_yahtzee, score_chance, 
-)
+score_slot_with_dice(slot::Slot, sorted_dievals) ::u8 = let
+    if slot==ACES return score_aces(sorted_dievals) end 
+    if slot==TWOS return score_twos(sorted_dievals) end 
+    if slot==THREES return score_threes(sorted_dievals) end 
+    if slot==FOURS return score_fours(sorted_dievals) end 
+    if slot==FIVES return score_fives(sorted_dievals) end 
+    if slot==SIXES return score_sixes(sorted_dievals) end 
+    if slot==THREE_OF_A_KIND return score_three_of_a_kind(sorted_dievals) end 
+    if slot==FOUR_OF_A_KIND return score_four_of_a_kind(sorted_dievals) end 
+    if slot==SM_STRAIGHT return score_sm_str8(sorted_dievals) end 
+    if slot==LG_STRAIGHT return score_lg_str8(sorted_dievals) end 
+    if slot==FULL_HOUSE return score_fullhouse(sorted_dievals) end 
+    if slot==CHANCE return score_chance(sorted_dievals) end 
+    if slot==YAHTZEE return score_yahtzee(sorted_dievals) end 
+end
 
 #=-------------------------------------------------------------
 APP
@@ -456,12 +477,14 @@ BUILD_CACHE
 function build_cache!(self::App) # = let 
     @inbounds all_dieval_combos=[o.dievals for o in outcomes_for_selection(0b11111) ] # TODO backport this depature to python/rust?
     placeholder_dievals = DieVals(0) 
+    placeholder_dievals_vec = [placeholder_dievals]
+    false_true = (true, false); just_false = (false,)
 
     # first handle special case of the most leafy leaf calcs -- where there's one slot left and no rolls remaining
     for single_slot in self.game.open_slots   
         slot = Slots(Slot(single_slot)) # set of a single slot 
         joker_rules_in_play = single_slot!=YAHTZEE # joker rules in effect when the yahtzee slot is not open 
-        for yahtzee_bonus_available in unique([false, joker_rules_in_play])  # yahtzee bonus -might- be available when joker rules are in play 
+        for yahtzee_bonus_available in ifelse(joker_rules_in_play, false_true, just_false ) # yahtzee bonus -might- be available when joker rules are in play 
             for upper_total in useful_upper_totals(slot)
                 for dieval_combo in all_dieval_combos
                     state = GameState(
@@ -489,7 +512,7 @@ function build_cache!(self::App) # = let
             for upper_total::u8 in useful_upper_totals(slots) 
 
                 # for each yathzee bonus possibility 
-                for yahtzee_bonus_available::u8 in unique([false,joker_rules_in_play]) # bonus always unavailable unless yahtzees are wild first
+                for yahtzee_bonus_available in ifelse(joker_rules_in_play, false_true, just_false ) # bonus always unavailable unless yahtzees are wild first
 
                     ticks = 848484 #=dice selection cache reads =# + (252 * slots_len * (2-(slots_len==1)) ) #= slot selection cache reads =#
                     update!(self.bar, self.bar.counter+ticks) # advance the progress bar by the number of cache reads coming up for dice selection 
@@ -497,7 +520,7 @@ function build_cache!(self::App) # = let
                     # for each rolls remaining
                     for rolls_remaining in 0:3  
 
-                        dieval_combos = ifelse(rolls_remaining==3 , [placeholder_dievals] , all_dieval_combos)
+                        dieval_combos = ifelse(rolls_remaining==3 , placeholder_dievals_vec , all_dieval_combos)
 
                         # let built_from_threads = die_combos.into_par_iter().fold(YahtCache::default, |mut built_this_thread, die_combo|{  
                         # built_this_thread = YahtCache() #self.ev_cache #TODO come back to make this actually multithreaded like commented rust code above
@@ -582,7 +605,7 @@ function build_cache!(self::App) # = let
                                     outcomes_arrangements_count = 0.f0 
                                     @inbounds outcomes = outcomes_for_selection(selection) 
                                     i::Int = length(outcomes)
-                                    while !(i==0)  # while loops easier to profile than for loops for critical hot code 
+                                    while !(i===0)  # while loops easier to profile than for loops for critical hot code 
                                         @inbounds roll_outcome = outcomes[i]
                                         newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
                                         @inbounds (; dievals, id) = SORTED_DIEVALS[Int(newvals.data)]
@@ -755,8 +778,8 @@ function main()
         # Slots(0x4, 0x5, 0x6),
         # Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x6),
-        Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd), # should yield 254.5896
-        # Slots(SIXES,YAHTZEE),
+        # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd), # should yield 254.5896
+        Slots(SIXES,YAHTZEE),
         # Slots(0x6,0x8,0xc), 
         # Slots(12),
         # Slots(0x3, FOURS, FIVES, SIXES, CHANCE, FULL_HOUSE, YAHTZEE, SM_STRAIGHT, LG_STRAIGHT, THREE_OF_A_KIND, FOUR_OF_A_KIND),
