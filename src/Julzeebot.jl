@@ -9,6 +9,7 @@ using ProgressMeter
 using Test
 using Infiltrator
 using OffsetArrays
+using .Threads 
 
 # # ExportAll https://discourse.julialang.org/t/exportall/4970/2
 # for n in names(@__MODULE__; all=true)
@@ -504,7 +505,7 @@ function build_cache!(self::App) # = let
 
                         for dieval_combo in dieval_combos
 
-                            if rolls_remaining==0  
+                            if rolls_remaining==0  && slots_len > 1 # slot selection, but not leaf calcs already recorded
 
                                 #= HANDLE SLOT SELECTION  =# 
 
@@ -570,7 +571,7 @@ function build_cache!(self::App) # = let
                                 self.ev_cache[state_to_set.id] = slot_choice_ev
                                 output_state_choice(self, state_to_set, slot_choice_ev)
 
-                            else #if rolls_remaining > 0  
+                            elseif rolls_remaining > 0  
 
                             #= HANDLE DICE SELECTION =#    
 
