@@ -55,7 +55,7 @@ end
 
 DieVals() = DieVals(0) 
 
-DieVals(d1::T, d2::T, d3::T, d4::T, d5::T) where {T} = let 
+DieVals(d1::T, d2::T, d3::T, d4::T, d5::T) where {T<:Number} = let 
     DieVals(u16(d5) << 12 | u16(d4) << 9 | u16(d3) << 6 | u16(d2) << 3 | u16(d1))
 end
 
@@ -63,9 +63,7 @@ end
 blit(self::DieVals, from::DieVals, mask::DieVals,) = 
     DieVals((self.data & mask.data) | from.data)
 
-Base.convert(::Type{DieVals}, from::Vector{Int64}) = DieVals(from) 
-
-Base.convert(::Type{DieVals}, from::NTuple{5,Int}) = DieVals(from) 
+# Base.convert(::Type{DieVals}, from::Vector{Int64}) = DieVals(from) 
 
 Base.copy(self::DieVals) = DieVals(self.data)
 
@@ -135,14 +133,6 @@ Base.getindex(self::Slots, i)::Slot= let
     return Slot(bit_index)
 end
 
-# has(slots_data::u16, slot) ::Bool = let
-#     a = slots_data
-#     b::u16= UInt16(0x1)
-#     c::u16= slot
-#     d::u16=0
-#     (a & b << c) > d 
-# end
-
 has(slots::Slots, slot) ::Bool = let
     0x0000 < slots.data & (0x0001<<u16(slot))  
 end
@@ -159,19 +149,6 @@ remove(self::Slots, slot_to_remove ) ::Slots = let
     newdata::u16 = self.data & mask # force off
     return Slots(newdata)
 end
-
-# Base.getindex(self::SortedSlots, i::Int)::Bool = contains(self,i) 
-
-# Base.length(self::SortedSlots) = 13 
-
-# Base.setindex!(self::SortedSlots, v::Bool, i::T) where {T<:Integer} =
-#     if v
-#         mask = 1 << u16(i)
-#         self.data |= mask # force on
-#     else
-#         mask = ~( 1 << u16(i) );
-#         self.data &= mask # force off
-#     end
 
 used_upper_slots(unused_slots::Slots) ::Slots = let
     all_bits_except_unused_uppers = ~unused_slots.data # "unused" slots (as encoded in .data) are not "previously used", so blank those out
@@ -600,7 +577,7 @@ function build_cache!(self::App) # = let
                                 next_roll::u8 = rolls_remaining-1 
                                 best_dice_choice_ev = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
                                 selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
-                                for selection in selections # we'll try each selection against this starting dice combo  
+                                @fastmath for selection in selections # we'll try each selection against this starting dice combo  
                                     total_ev_for_selection = 0.f0 
                                     outcomes_arrangements_count = 0.f0 
                                     @inbounds outcomes = outcomes_for_selection(selection) 
@@ -776,10 +753,10 @@ function main()
         # DieVals(3,4,4,6,6),
         DieVals(0),
         # Slots(0x4, 0x5, 0x6),
-        # Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
+        Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x6),
         # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd), # should yield 254.5896
-        Slots(SIXES,YAHTZEE),
+        # Slots(SIXES,YAHTZEE),
         # Slots(0x6,0x8,0xc), 
         # Slots(12),
         # Slots(0x3, FOURS, FIVES, SIXES, CHANCE, FULL_HOUSE, YAHTZEE, SM_STRAIGHT, LG_STRAIGHT, THREE_OF_A_KIND, FOUR_OF_A_KIND),
@@ -793,7 +770,7 @@ function main()
     # @assert lhs.ev ≈ 23.9   atol=0.1
 end
 
-main()
+# main()
 
 
-# end # module
+# end # modulne
