@@ -576,34 +576,13 @@ function build_cache!(self::App) # = let
                             #= HANDLE DICE SELECTION =#    
 
                                 next_roll::u8 = rolls_remaining-1 
-                                best_dice_choice_ev = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
+                                best = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
                                 selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
                                 @fastmath for selection in selections # we'll try each selection against this starting dice combo  
-                                    total_ev_for_selection = 0.f0 
-                                    outcomes_arrangements_count = 0.f0 
-                                    @inbounds outcomes = outcomes_for_selection(selection) 
-                                    i::Int = length(outcomes)
-                                    while !(i===0)  # while loops easier to profile than for loops for critical hot code 
-                                        @inbounds roll_outcome = outcomes[i]
-                                        newvals = blit(dieval_combo, roll_outcome.dievals, roll_outcome.mask)
-                                        @inbounds (; dievals, id) = SORTED_DIEVALS[Int(newvals.data)]
-                                        state_to_get = GameState(
-                                            dievals, 
-                                            slots, 
-                                            upper_total, 
-                                            next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
-                                            yahtzee_bonus_available, 
-                                        )
-                                        @inbounds cache_entry = self.ev_cache[Int(state_to_get.id)]
-                                        ev_for_this_outcome = cache_entry.ev 
-                                        arrangements = roll_outcome.arrangements
-                                        total_ev_for_selection = ev_for_this_outcome * arrangements + total_ev_for_selection  # bake into upcoming average 
-                                        outcomes_arrangements_count += arrangements # we loop through die "combos" but we'll average all "perumtations"
-                                        i-=1
-                                    end 
-                                    avg_ev_for_selection = total_ev_for_selection / outcomes_arrangements_count
-                                    if avg_ev_for_selection > best_dice_choice_ev.ev
-                                        best_dice_choice_ev = ChoiceEV(selection, avg_ev_for_selection)
+                                    @inbounds roll_outcomes = outcomes_for_selection(selection) 
+                                    @inline avg_ev_for_selection = avg_ev(dieval_combo, roll_outcomes, slots, upper_total, next_roll,yahtzee_bonus_available, self.ev_cache)
+                                    if avg_ev_for_selection > best.ev
+                                        best = ChoiceEV(selection, avg_ev_for_selection)
                                     end 
                                 end 
                                 state_to_set = GameState(
@@ -613,8 +592,8 @@ function build_cache!(self::App) # = let
                                     rolls_remaining, 
                                     yahtzee_bonus_available, 
                                 ) 
-                                output_state_choice(self, state_to_set, best_dice_choice_ev)
-                                self.ev_cache[state_to_set.id]=best_dice_choice_ev
+                                output_state_choice(self, state_to_set, best)
+                                self.ev_cache[state_to_set.id] = best
 
                             end # if rolls_remaining...  
 
@@ -636,6 +615,35 @@ function build_cache!(self::App) # = let
 
 end #fn build_cache
 
+@inline avg_ev(start_dievals, possible_roll_outcomes, slots, upper_total, next_roll,yahtzee_bonus_available, ev_cache) = let 
+    total_ev_for_selection = 0.f0 
+    outcomes_arrangements_count = 0.f0 
+    i::Int = length(possible_roll_outcomes)
+    while !(i===0)  # while-loops easier to optimize than for-loops for critical hot code 
+        #= calc newvals =#
+            @inbounds roll_outcome = possible_roll_outcomes[i]
+            newvals = blit(start_dievals, roll_outcome.dievals, roll_outcome.mask)
+        #= gather sorted =#
+            @inbounds (; dievals, id) = SORTED_DIEVALS[Int(newvals.data)]
+        #= gather ev =#
+            state_to_get = GameState(
+                dievals, #sorted newvals
+                slots, 
+                upper_total, 
+                next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
+                yahtzee_bonus_available, 
+            )
+            @inbounds cache_entry = ev_cache[Int(state_to_get.id)]
+            ev_for_this_outcome = cache_entry.ev 
+        #= hot calcs =#
+            arrangements = roll_outcome.arrangements
+            total_ev_for_selection = ev_for_this_outcome * arrangements + total_ev_for_selection  # bake into upcoming average 
+            outcomes_arrangements_count += arrangements # we loop through die "combos" but we'll average all "perumtations"
+        i-=1; 
+    end 
+    return  total_ev_for_selection / outcomes_arrangements_count
+end
+ 
 #=-------------------------------------------------------------
 INITIALIZERS
 -------------------------------------------------------------=#
