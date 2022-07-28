@@ -3,13 +3,12 @@
 import Combinatorics: permutations, with_replacement_combinations, combinations, powerset
 import DataStructures: counter
 import Base.Iterators
-using Memoize
+# import InteractiveUtils
 using Base
 using ProgressMeter 
-using Test
-using Infiltrator
+# using Infiltrator
 using OffsetArrays
-using .Threads 
+# using .Threads 
 
 # # ExportAll https://discourse.julialang.org/t/exportall/4970/2
 # for n in names(@__MODULE__; all=true)
@@ -453,7 +452,7 @@ BUILD_CACHE
 # gather up expected values in a multithreaded bottom-up fashion. this is like.. the main thing
 
 function build_cache!(self::App) # = let 
-    @inbounds all_dieval_combos=[o.dievals for o in outcomes_for_selection(0b11111) ] # TODO backport this depature to python/rust?
+    @inbounds all_dieval_combos=[o.dievals for o in OUTCOMES[outcomes_range_for_selection(0b11111)] ] # TODO backport this depature to python/rust?
     placeholder_dievals = DieVals(0) 
     placeholder_dievals_vec = [placeholder_dievals]
     false_true = (true, false); just_false = (false,)
@@ -578,9 +577,8 @@ function build_cache!(self::App) # = let
                                 next_roll::u8 = rolls_remaining-1 
                                 best = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
                                 selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
-                                @fastmath for selection in selections # we'll try each selection against this starting dice combo  
-                                    @inbounds roll_outcomes = outcomes_for_selection(selection) 
-                                    @inline avg_ev_for_selection = avg_ev(dieval_combo, roll_outcomes, slots, upper_total, next_roll,yahtzee_bonus_available, self.ev_cache)
+                                for selection in selections # we'll try each selection against this starting dice combo  
+                                    @inline avg_ev_for_selection = avg_ev(dieval_combo, selection, slots, upper_total, next_roll,yahtzee_bonus_available, self.ev_cache)
                                     if avg_ev_for_selection > best.ev
                                         best = ChoiceEV(selection, avg_ev_for_selection)
                                     end 
@@ -615,33 +613,42 @@ function build_cache!(self::App) # = let
 
 end #fn build_cache
 
-@inline avg_ev(start_dievals, possible_roll_outcomes, slots, upper_total, next_roll,yahtzee_bonus_available, ev_cache) = let 
+avg_ev(start_dievals, selection, slots, upper_total, next_roll,yahtzee_bonus_available, ev_cache) = let 
     total_ev_for_selection = 0.f0 
     outcomes_arrangements_count = 0.f0 
-    i::Int = length(possible_roll_outcomes)
-    while !(i===0)  # while-loops easier to optimize than for-loops for critical hot code 
-        #= calc newvals =#
-            @inbounds roll_outcome = possible_roll_outcomes[i]
-            newvals = blit(start_dievals, roll_outcome.dievals, roll_outcome.mask)
+    range = outcomes_range_for_selection(selection) 
+  
+    @inbounds @simd for i in range 
+        NEWVALS_DATA_BUFFER[i] = start_dievals.data & OUTCOME_MASK_DATA[i]
+        NEWVALS_DATA_BUFFER[i] |= OUTCOME_DIEVALS_DATA[i]
+    end
+
+    floor_state_id = GameState(
+        DieVals(0),
+        slots, 
+        upper_total, 
+        next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
+        yahtzee_bonus_available, 
+    ).id
+    @inbounds for i in range 
         #= gather sorted =#
-            @inbounds (; dievals, id) = SORTED_DIEVALS[Int(newvals.data)]
+            newvals_datum = Int(NEWVALS_DATA_BUFFER[i])
+            sorted_dievals_id = SORTED_DIEVALS[newvals_datum].id
         #= gather ev =#
-            state_to_get = GameState(
-                dievals, #sorted newvals
-                slots, 
-                upper_total, 
-                next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
-                yahtzee_bonus_available, 
-            )
-            @inbounds cache_entry = ev_cache[Int(state_to_get.id)]
-            ev_for_this_outcome = cache_entry.ev 
-        #= hot calcs =#
-            arrangements = roll_outcome.arrangements
-            total_ev_for_selection = ev_for_this_outcome * arrangements + total_ev_for_selection  # bake into upcoming average 
-            outcomes_arrangements_count += arrangements # we loop through die "combos" but we'll average all "perumtations"
-        i-=1; 
+            state_to_get_id = floor_state_id | sorted_dievals_id
+            cache_entry = ev_cache[Int(state_to_get_id)]
+            OUTCOME_EVS_BUFFER[i] = cache_entry.ev
     end 
+
+    #= hot calcs =#
+        @fastmath @inbounds @simd for i in range # we looped through die "combos" but we need to average all "perumtations"
+            EVS_TIMES_ARRANGEMENTS_BUFFER[i] = OUTCOME_EVS_BUFFER[i] * OUTCOME_ARRANGEMENTS[i]
+            total_ev_for_selection +=  EVS_TIMES_ARRANGEMENTS_BUFFER[i] 
+            outcomes_arrangements_count += OUTCOME_ARRANGEMENTS[i] 
+        end
+
     return  total_ev_for_selection / outcomes_arrangements_count
+
 end
  
 #=-------------------------------------------------------------
@@ -701,9 +708,8 @@ selection_ranges() = let  # ::Vector{UnitRange{Int}}
     return sel_ranges
 end 
 
-# the set of roll outcomes for every possible 5-die selection, where '0' represents an unselected die """
-all_selection_outcomes() ::Vector{Outcome} = let  
-    retval = Vector{Outcome}(undef,1683) 
+# preps the caches of roll outcomes data for every possible 5-die selection, where '0' represents an unselected die """
+cache_roll_outcomes_data!() = let  
     i=0
     idx_combos = powerset(1:5) 
     for idx_combo_vec in idx_combos 
@@ -716,18 +722,20 @@ all_selection_outcomes() ::Vector{Outcome} = let
                 dievals_vec[idx] = DieVal(val) 
                 mask_vec[idx]=DieVal(0)
             end 
-            arrangements = distinct_arrangements_for(dievals_combo_vec)
-            retval[i]=Outcome(
+            arrangement_count = distinct_arrangements_for(dievals_combo_vec)
+            OUTCOME_DIEVALS_DATA[i] = DieVals(dievals_vec...).data
+            OUTCOME_MASK_DATA[i] = DieVals(mask_vec...).data
+            OUTCOME_ARRANGEMENTS[i] = arrangement_count
+            OUTCOMES[i]=Outcome(
                 DieVals(dievals_vec...),
                 DieVals(mask_vec...),
-                arrangements
+                arrangement_count
             )
         end 
     end 
-    return retval
 end 
 
-distinct_arrangements_for(dieval_vec) ::u8 = let #(dieval_vec:Vec<DieVal>)->u8{
+distinct_arrangements_for(dieval_vec) ::f32 = let #(dieval_vec:Vec<DieVal>)->u8{
     key_count = counter(dieval_vec)
     divisor=1
     non_zero_dievals=0
@@ -740,16 +748,23 @@ distinct_arrangements_for(dieval_vec) ::u8 = let #(dieval_vec:Vec<DieVal>)->u8{
     factorial(non_zero_dievals) / divisor
 end 
 
-# returns a slice from the precomputed dice roll outcomes that corresponds to the given selection bitfield """
-Base.@propagate_inbounds function outcomes_for_selection(selection::Selection) #(selection:u9)->&'static [Outcome]{
+# returns a range which corresponds the precomputed dice roll outcome data corresponding to the given selection
+function outcomes_range_for_selection(selection::Selection) #(selection:u9)->&'static [Outcome]{
     one_based_idx = selection + 1 # selection bitfield is 0 to 31 but Julia indexes are from 1 to 32
-    idx = RANGE_IDX_FOR_SELECTION[one_based_idx]
-    range = SELECTION_RANGES[idx]
-    @inbounds view(OUTCOMES,range)
+    @inbounds idx = RANGE_IDX_FOR_SELECTION[one_based_idx]
+    @inbounds range = SELECTION_RANGES[idx]
+    return range
 end
 
 const SELECTION_RANGES = selection_ranges()  
-const OUTCOMES = all_selection_outcomes()
+const OUTCOMES = Vector{Outcome}(undef,1683) 
+const OUTCOME_DIEVALS_DATA = Vector{u16}(undef,1683) 
+const OUTCOME_MASK_DATA = Vector{u16}(undef,1683) 
+const OUTCOME_ARRANGEMENTS = Vector{f32}(undef,1683) 
+cache_roll_outcomes_data!()
+const OUTCOME_EVS_BUFFER = Vector{f32}(undef,1683) 
+const NEWVALS_DATA_BUFFER = Vector{u16}(undef,1683) 
+const EVS_TIMES_ARRANGEMENTS_BUFFER = Vector{f32}(undef,1683)
 const SORTED_DIEVALS = sorted_dievals()
 const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13,19,15,21,24,28,16,22,25,29,26,30,31,32] # julia hand-cobbled mapping
 # const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # mapping used in Rust and Python impls after 1-basing
@@ -759,8 +774,8 @@ function main()
     
     game = GameState( 
         # DieVals(1,2,3,5,6),
-        # DieVals(3,4,4,6,6),
-        DieVals(0),
+        DieVals(3,4,4,6,6),
+        # DieVals(0),
         # Slots(0x4, 0x5, 0x6),
         Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x6),
@@ -770,13 +785,21 @@ function main()
         # Slots(12),
         # Slots(0x3, FOURS, FIVES, SIXES, CHANCE, FULL_HOUSE, YAHTZEE, SM_STRAIGHT, LG_STRAIGHT, THREE_OF_A_KIND, FOUR_OF_A_KIND),
         # 60, 1, false
-        0, 3, false
+        0, 2, false
     )
     app = App(game)
     build_cache!(app)
     lhs=app.ev_cache[game.id]
     println("\n$(bitstring(lhs.choice))\t$(round(lhs.ev,digits=4))")
-    # @assert lhs.ev ≈ 23.9   atol=0.1
+    # InteractiveUtils.@code_llvm avg_ev(
+    #     game.sorted_dievals,
+    #     0b11111,
+    #     game.open_slots,
+    #     game.upper_total,
+    #     game.rolls_remaining,
+    #     game.yahtzee_bonus_avail,
+    #     app.ev_cache 
+    # )
 end
 
 # main()
