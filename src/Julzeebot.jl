@@ -784,7 +784,7 @@ function main()
         # Slots(0x6,0x8,0xc), 
         # Slots(12),
         # Slots(0x3, FOURS, FIVES, SIXES, CHANCE, FULL_HOUSE, YAHTZEE, SM_STRAIGHT, LG_STRAIGHT, THREE_OF_A_KIND, FOUR_OF_A_KIND),
-        # 60, 1, false
+        # 0, 3, false
         0, 2, false
     )
     app = App(game)
