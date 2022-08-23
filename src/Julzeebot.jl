@@ -618,7 +618,7 @@ avg_ev(start_dievals, selection, slots, upper_total, next_roll,yahtzee_bonus_ava
     outcomes_arrangements_count = 0.f0 
     range = outcomes_range_for_selection(selection) 
   
-    @inbounds @simd for i in range 
+    @inbounds @simd ivdep for i in range 
         NEWVALS_DATA_BUFFER[i] = start_dievals.data & OUTCOME_MASK_DATA[i]
         NEWVALS_DATA_BUFFER[i] |= OUTCOME_DIEVALS_DATA[i]
     end
@@ -636,16 +636,16 @@ avg_ev(start_dievals, selection, slots, upper_total, next_roll,yahtzee_bonus_ava
             sorted_dievals_id = SORTED_DIEVALS[newvals_datum].id
         #= gather ev =#
             state_to_get_id = floor_state_id | sorted_dievals_id
-            cache_entry = ev_cache[Int(state_to_get_id)]
+            state_to_get_idx = Int(state_to_get_id)
+            cache_entry = ev_cache[state_to_get_idx]
             OUTCOME_EVS_BUFFER[i] = cache_entry.ev
     end 
 
-    #= hot calcs =#
-        @fastmath @inbounds @simd for i in range # we looped through die "combos" but we need to average all "perumtations"
-            EVS_TIMES_ARRANGEMENTS_BUFFER[i] = OUTCOME_EVS_BUFFER[i] * OUTCOME_ARRANGEMENTS[i]
-            total_ev_for_selection +=  EVS_TIMES_ARRANGEMENTS_BUFFER[i] 
-            outcomes_arrangements_count += OUTCOME_ARRANGEMENTS[i] 
-        end
+    @fastmath @inbounds @simd ivdep for i in range # we looped through die "combos" but we need to average all "perumtations"
+        EVS_TIMES_ARRANGEMENTS_BUFFER[i] = OUTCOME_EVS_BUFFER[i] * OUTCOME_ARRANGEMENTS[i]
+        total_ev_for_selection +=  EVS_TIMES_ARRANGEMENTS_BUFFER[i] 
+        outcomes_arrangements_count += OUTCOME_ARRANGEMENTS[i] 
+    end
 
     return  total_ev_for_selection / outcomes_arrangements_count
 
