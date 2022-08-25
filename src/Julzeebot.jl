@@ -3,6 +3,7 @@
 import Combinatorics: permutations, with_replacement_combinations, combinations, powerset
 import DataStructures: counter
 import Base.Iterators
+using Base.Threads
 # import InteractiveUtils
 using Base
 using ProgressMeter 
@@ -504,104 +505,17 @@ function build_cache!(self::App) # = let
 
                         for dieval_combo in dieval_combos
 
-                            if rolls_remaining==0  && slots_len > 1 # slot selection, but not leaf calcs already recorded
-
-                                #= HANDLE SLOT SELECTION  =# 
-
-                                slot_choice_ev=ChoiceEV(0,0)
-
-                                for slot in slots 
-
-                                    #joker rules say extra yahtzees must be played in their matching upper slot if it's available
-                                    first_dieval::u8 = dieval_combo[1]
-                                    joker_rules_matter = joker_rules_in_play && score_yahtzee(dieval_combo)>0 && has(slots,first_dieval)
-                                    head_slot::Slot = ifelse(joker_rules_matter , first_dieval , slot)
-
-                                    yahtzee_bonus_avail_now = yahtzee_bonus_available
-                                    upper_total_now::u8 = upper_total
-                                    dievals_or_placeholder = dieval_combo
-                                    head_plus_tail_ev = 0.f0
-                                    rolls_remaining_now = 0
-   
-                                    # find the collective ev for the all the slots with this iteration's slot being first 
-                                    # do this by summing the ev for the first (head) slot with the ev value that we look up for the remaining (tail) slots
-                                    passes = slots_len==1 ? 1 : 2
-                                    for i in 1:passes
-                                        slots_piece = ifelse(i==1 , Slots(Slot(head_slot)) , remove(slots,head_slot))  # work on the head only or the set of slots without the head
-                                        upper_total_to_save = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0x0)# only relevant totals are cached
-                                        # if upper_total_now + best_upper_total(slots_piece) < 0x3f#=63=# upper_total_now = 0x0 end # map irrelevant totals to 0 when they can't reach the needed bonus threshold 
-                                        state_to_get = GameState(
-                                            dievals_or_placeholder,
-                                            slots_piece, 
-                                            upper_total_to_save,
-                                            rolls_remaining_now, 
-                                            yahtzee_bonus_avail_now,
-                                        )
-                                        choice_ev = self.ev_cache[state_to_get.id]
-                                        if i==1 && slots_len > 1 #prep 2nd pass on relevant 1st pass only..  
-                                            #going into tail slots next, we may need to adjust the state based on the head choice
-                                            if choice_ev.choice <= SIXES  # adjust upper total for the next pass 
-                                                added = u8(choice_ev.ev % 100) # the modulo 100 here removes any yathzee bonus from ev since that doesnt' count toward upper bonus total
-                                                upper_total_now = min(63, upper_total_now + added);
-                                            elseif choice_ev.choice==YAHTZEE  # adjust yahtzee related state for the next pass
-                                                if choice_ev.ev>0.f0 yahtzee_bonus_avail_now=true end
-                                            end 
-                                            rolls_remaining_now=3 # for upcoming tail lookup, we always want the ev for 3 rolls remaining
-                                            dievals_or_placeholder= placeholder_dievals # for 3 rolls remaining, use "wildcard" representative dievals since dice don't matter when rolling all of them
-                                        end 
-                                        head_plus_tail_ev += choice_ev.ev
-                                    end #for i in passes 
-
-                                    if head_plus_tail_ev >= slot_choice_ev.ev #TODO optimize with > instead of >= ?
-                                        slot_choice_ev = ChoiceEV(slot, head_plus_tail_ev)
-                                    end
-                                    
-                                    if joker_rules_matter break end # if joker-rules-matter we were forced to choose one slot, so we can skip trying the rest  
-
-                                end #for slot in slots                               
-
-                                state_to_set = GameState(
-                                    dieval_combo,
-                                    slots,
-                                    upper_total, 
-                                    0, 
-                                    yahtzee_bonus_available,
-                                ) 
-                                self.ev_cache[state_to_set.id] = slot_choice_ev
-                                output_state_choice(self, state_to_set, slot_choice_ev)
-
-                            elseif rolls_remaining > 0  
-
-                            #= HANDLE DICE SELECTION =#    
-
-                                next_roll::u8 = rolls_remaining-1 
-                                best = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
-                                selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
-                                for selection in selections # we'll try each selection against this starting dice combo  
-                                    @inline avg_ev_for_selection = avg_ev(dieval_combo, selection, slots, upper_total, next_roll,yahtzee_bonus_available, self.ev_cache)
-                                    if avg_ev_for_selection > best.ev
-                                        best = ChoiceEV(selection, avg_ev_for_selection)
-                                    end 
-                                end 
-                                state_to_set = GameState(
-                                    dieval_combo,
-                                    slots, 
-                                    upper_total, 
-                                    rolls_remaining, 
-                                    yahtzee_bonus_available, 
-                                ) 
-                                output_state_choice(self, state_to_set, best)
-                                self.ev_cache[state_to_set.id] = best
-
-                            end # if rolls_remaining...  
-
-                        #     built_this_thread
-
-                        # }).reduce(YahtCache::default, |mut a,built_from_thread|{
-                        #     a.extend(&built_from_thread); a 
-                        # }); # end die_combos.par_into_iter() 
-
-                        # self.ev_cache.extend(&built_from_threads);
+                            @inline each_dieval_combo(
+                                rolls_remaining, 
+                                slots_len, 
+                                slots, 
+                                dieval_combo,
+                                joker_rules_in_play,
+                                yahtzee_bonus_available,
+                                upper_total,
+                                self,
+                                placeholder_dievals
+                            )
 
                         end # for die_combo in die_combos
 
@@ -613,12 +527,113 @@ function build_cache!(self::App) # = let
 
 end #fn build_cache
 
+each_dieval_combo(rolls_remaining, slots_len, slots, dieval_combo, joker_rules_in_play, yahtzee_bonus_available, upper_total, self, placeholder_dievals) = let
+
+    avg_ev_for_selection_buffer=OffsetVector{Float32}(undef,0:32)
+    task_buffer=OffsetVector{Float32}(undef,0:32)
+
+    if rolls_remaining==0  && slots_len > 1 # slot selection, but not leaf calcs already recorded
+
+        #= HANDLE SLOT SELECTION  =# 
+
+        slot_choice_ev=ChoiceEV(0,0)
+
+        for slot in slots 
+
+            #joker rules say extra yahtzees must be played in their matching upper slot if it's available
+            first_dieval::u8 = dieval_combo[1]
+            joker_rules_matter = joker_rules_in_play && score_yahtzee(dieval_combo)>0 && has(slots,first_dieval)
+            head_slot::Slot = ifelse(joker_rules_matter , first_dieval , slot)
+
+            yahtzee_bonus_avail_now = yahtzee_bonus_available
+            upper_total_now::u8 = upper_total
+            dievals_or_placeholder = dieval_combo
+            head_plus_tail_ev = 0.f0
+            rolls_remaining_now = 0
+
+            # find the collective ev for the all the slots with this iteration's slot being first 
+            # do this by summing the ev for the first (head) slot with the ev value that we look up for the remaining (tail) slots
+            passes = slots_len==1 ? 1 : 2
+            for i in 1:passes
+                slots_piece = ifelse(i==1 , Slots(Slot(head_slot)) , remove(slots,head_slot))  # work on the head only or the set of slots without the head
+                upper_total_to_save = ifelse(upper_total_now + best_upper_total(slots_piece) >= 63 , upper_total_now , 0x0)# only relevant totals are cached
+                # if upper_total_now + best_upper_total(slots_piece) < 0x3f#=63=# upper_total_now = 0x0 end # map irrelevant totals to 0 when they can't reach the needed bonus threshold 
+                state_to_get = GameState(
+                    dievals_or_placeholder,
+                    slots_piece, 
+                    upper_total_to_save,
+                    rolls_remaining_now, 
+                    yahtzee_bonus_avail_now,
+                )
+                choice_ev = self.ev_cache[state_to_get.id]
+                if i==1 && slots_len > 1 #prep 2nd pass on relevant 1st pass only..  
+                    #going into tail slots next, we may need to adjust the state based on the head choice
+                    if choice_ev.choice <= SIXES  # adjust upper total for the next pass 
+                        added = u8(choice_ev.ev % 100) # the modulo 100 here removes any yathzee bonus from ev since that doesnt' count toward upper bonus total
+                        upper_total_now = min(63, upper_total_now + added);
+                    elseif choice_ev.choice==YAHTZEE  # adjust yahtzee related state for the next pass
+                        if choice_ev.ev>0.f0 yahtzee_bonus_avail_now=true end
+                    end 
+                    rolls_remaining_now=3 # for upcoming tail lookup, we always want the ev for 3 rolls remaining
+                    dievals_or_placeholder= placeholder_dievals # for 4 rolls remaining, use "wildcard" representative dievals since dice don't matter when rolling all of them
+                end 
+                head_plus_tail_ev += choice_ev.ev
+            end #for i in passes 
+
+            if head_plus_tail_ev >= slot_choice_ev.ev #TODO optimize with > instead of >= ?
+                slot_choice_ev = ChoiceEV(slot, head_plus_tail_ev)
+            end
+            
+            if joker_rules_matter break end # if joker-rules-matter we were forced to choose one slot, so we can skip trying the rest  
+
+        end #for slot in slots                               
+
+        state_to_set = GameState(
+            dieval_combo,
+            slots,
+            upper_total, 
+            0, 
+            yahtzee_bonus_available,
+        ) 
+        self.ev_cache[state_to_set.id] = slot_choice_ev
+        output_state_choice(self, state_to_set, slot_choice_ev)
+
+    elseif rolls_remaining > 0  
+
+    #= HANDLE DICE SELECTION =#    
+
+        next_roll::u8 = rolls_remaining-1 
+        best = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
+        selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
+        
+        fill!(avg_ev_for_selection_buffer,0.f0)
+        for selection in selections # we'll try each selection against this starting dice combo  
+            @inline avg_ev_for_selection = avg_ev(dieval_combo, selection, slots, upper_total, next_roll,yahtzee_bonus_available, self.ev_cache)
+            if avg_ev_for_selection > best.ev
+                best = ChoiceEV(selection, avg_ev_for_selection)
+            end
+        end 
+        state_to_set = GameState(
+            dieval_combo,
+            slots, 
+            upper_total, 
+            rolls_remaining, 
+            yahtzee_bonus_available, 
+        ) 
+        output_state_choice(self, state_to_set, best)
+        self.ev_cache[state_to_set.id] = best
+
+    end # if rolls_remaining...  
+
+end
+ 
 avg_ev(start_dievals, selection, slots, upper_total, next_roll,yahtzee_bonus_available, ev_cache) = let 
+
     total_ev_for_selection = 0.f0 
     outcomes_arrangements_count = 0.f0 
     range = outcomes_range_for_selection(selection) 
   
-    @inbounds @simd ivdep for i in range 
+    @inbounds @simd ivdep for i in range  #"ivdep" breaks syntax checker but is valid macro arg which gives @simd some extra optimization leeway 
         NEWVALS_DATA_BUFFER[i] = start_dievals.data & OUTCOME_MASK_DATA[i]
         NEWVALS_DATA_BUFFER[i] |= OUTCOME_DIEVALS_DATA[i]
     end
@@ -630,6 +645,7 @@ avg_ev(start_dievals, selection, slots, upper_total, next_roll,yahtzee_bonus_ava
         next_roll, # we'll average all the 'next roll' possibilities (which we'd calclated last) to get ev for 'this roll' 
         yahtzee_bonus_available, 
     ).id
+
     @inbounds for i in range 
         #= gather sorted =#
             newvals_datum = Int(NEWVALS_DATA_BUFFER[i])
