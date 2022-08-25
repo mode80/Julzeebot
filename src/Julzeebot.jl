@@ -442,7 +442,7 @@ end
 
 output_state_choice(self ::App, state ::GameState, choice_ev ::ChoiceEV) = let 
     # Uncomment below for more verbose progress output at the expense of speed 
-    # println(state, choice_ev) #.printed(state, choice_ev)
+    # println(state, choice_ev, Threads.threadid() ) #.printed(state, choice_ev)
 end 
 
 
@@ -503,9 +503,11 @@ function build_cache!(self::App) # = let
                         # let built_from_threads = die_combos.into_par_iter().fold(YahtCache::default, |mut built_this_thread, die_combo|{  
                         # built_this_thread = YahtCache() #self.ev_cache #TODO come back to make this actually multithreaded like commented rust code above
 
-                        for dieval_combo in dieval_combos
+                        Threads.@threads :static for dieval_combo in dieval_combos
 
-                            @inline each_dieval_combo(
+                            # println(Threads.threadid() )
+                            
+                            process_dieval_combo!(
                                 rolls_remaining, 
                                 slots_len, 
                                 slots, 
@@ -527,10 +529,9 @@ function build_cache!(self::App) # = let
 
 end #fn build_cache
 
-each_dieval_combo(rolls_remaining, slots_len, slots, dieval_combo, joker_rules_in_play, yahtzee_bonus_available, upper_total, self, placeholder_dievals) = let
+process_dieval_combo!(rolls_remaining, slots_len, slots, dieval_combo, joker_rules_in_play, yahtzee_bonus_available, upper_total, self, placeholder_dievals) = let
 
-    avg_ev_for_selection_buffer=OffsetVector{Float32}(undef,0:32)
-    task_buffer=OffsetVector{Float32}(undef,0:32)
+    threadid = Threads.threadid()
 
     if rolls_remaining==0  && slots_len > 1 # slot selection, but not leaf calcs already recorded
 
@@ -606,9 +607,8 @@ each_dieval_combo(rolls_remaining, slots_len, slots, dieval_combo, joker_rules_i
         best = ChoiceEV(0,0.)# selections are bitfields where '1' means roll and '0' means don't roll 
         selections = ifelse(rolls_remaining==3 , (0b11111:0b11111) , (0b00000:0b11111) )#select all dice on the initial roll, else try all selections
         
-        fill!(avg_ev_for_selection_buffer,0.f0)
         for selection in selections # we'll try each selection against this starting dice combo  
-            @inline avg_ev_for_selection = avg_ev(dieval_combo, selection, slots, upper_total, next_roll,yahtzee_bonus_available, self.ev_cache)
+            @inline avg_ev_for_selection = avg_ev(dieval_combo, selection, slots, upper_total, next_roll,yahtzee_bonus_available, self.ev_cache, threadid)
             if avg_ev_for_selection > best.ev
                 best = ChoiceEV(selection, avg_ev_for_selection)
             end
@@ -627,15 +627,15 @@ each_dieval_combo(rolls_remaining, slots_len, slots, dieval_combo, joker_rules_i
 
 end
  
-avg_ev(start_dievals, selection, slots, upper_total, next_roll,yahtzee_bonus_available, ev_cache) = let 
+avg_ev(start_dievals, selection, slots, upper_total, next_roll,yahtzee_bonus_available, ev_cache, threadid) = let 
 
     total_ev_for_selection = 0.f0 
     outcomes_arrangements_count = 0.f0 
     range = outcomes_range_for_selection(selection) 
   
     @inbounds @simd ivdep for i in range  #"ivdep" breaks syntax checker but is valid macro arg which gives @simd some extra optimization leeway 
-        NEWVALS_DATA_BUFFER[i] = start_dievals.data & OUTCOME_MASK_DATA[i]
-        NEWVALS_DATA_BUFFER[i] |= OUTCOME_DIEVALS_DATA[i]
+        NEWVALS_DATA_BUFFER[i, threadid] = start_dievals.data & OUTCOME_MASK_DATA[i]
+        NEWVALS_DATA_BUFFER[i, threadid] |= OUTCOME_DIEVALS_DATA[i]
     end
 
     floor_state_id = GameState(
@@ -648,18 +648,18 @@ avg_ev(start_dievals, selection, slots, upper_total, next_roll,yahtzee_bonus_ava
 
     @inbounds for i in range 
         #= gather sorted =#
-            newvals_datum = Int(NEWVALS_DATA_BUFFER[i])
+            newvals_datum = Int(NEWVALS_DATA_BUFFER[i, threadid])
             sorted_dievals_id = SORTED_DIEVALS[newvals_datum].id
         #= gather ev =#
             state_to_get_id = floor_state_id | sorted_dievals_id
             state_to_get_idx = Int(state_to_get_id)
             cache_entry = ev_cache[state_to_get_idx]
-            OUTCOME_EVS_BUFFER[i] = cache_entry.ev
+            OUTCOME_EVS_BUFFER[i, threadid] = cache_entry.ev
     end 
 
     @fastmath @inbounds @simd ivdep for i in range # we looped through die "combos" but we need to average all "perumtations"
-        EVS_TIMES_ARRANGEMENTS_BUFFER[i] = OUTCOME_EVS_BUFFER[i] * OUTCOME_ARRANGEMENTS[i]
-        total_ev_for_selection +=  EVS_TIMES_ARRANGEMENTS_BUFFER[i] 
+        EVS_TIMES_ARRANGEMENTS_BUFFER[i, threadid] = OUTCOME_EVS_BUFFER[i, threadid] * OUTCOME_ARRANGEMENTS[i]
+        total_ev_for_selection +=  EVS_TIMES_ARRANGEMENTS_BUFFER[i, threadid] 
         outcomes_arrangements_count += OUTCOME_ARRANGEMENTS[i] 
     end
 
@@ -778,9 +778,9 @@ const OUTCOME_DIEVALS_DATA = Vector{u16}(undef,1683)
 const OUTCOME_MASK_DATA = Vector{u16}(undef,1683) 
 const OUTCOME_ARRANGEMENTS = Vector{f32}(undef,1683) 
 cache_roll_outcomes_data!()
-const OUTCOME_EVS_BUFFER = Vector{f32}(undef,1683) 
-const NEWVALS_DATA_BUFFER = Vector{u16}(undef,1683) 
-const EVS_TIMES_ARRANGEMENTS_BUFFER = Vector{f32}(undef,1683)
+const OUTCOME_EVS_BUFFER = Array{f32}(undef,1683,Threads.nthreads()) 
+const NEWVALS_DATA_BUFFER = Array{u16}(undef,1683,Threads.nthreads()) 
+const EVS_TIMES_ARRANGEMENTS_BUFFER = Array{f32}(undef,1683,Threads.nthreads())
 const SORTED_DIEVALS = sorted_dievals()
 const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13,19,15,21,24,28,16,22,25,29,26,30,31,32] # julia hand-cobbled mapping
 # const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # mapping used in Rust and Python impls after 1-basing
