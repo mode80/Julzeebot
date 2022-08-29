@@ -1,22 +1,11 @@
 # module Julzeebot
-# import StaticArrays: SVector
 import Combinatorics: permutations, with_replacement_combinations, combinations, powerset
 import DataStructures: counter
 import Base.Iterators
 using Base.Threads
-# import InteractiveUtils
-using Base
 using ProgressMeter 
-# using Infiltrator
 using OffsetArrays
-# using .Threads 
-
-# # ExportAll https://discourse.julialang.org/t/exportall/4970/2
-# for n in names(@__MODULE__; all=true)
-#     if Base.isidentifier(n) && n ∉ (Symbol(@__MODULE__), :eval, :include)
-#         @eval export $n
-#     end
-# end
+# using Infiltrator
 
 #=-------------------------------------------------------------
 CONSTS, UTILS
@@ -138,13 +127,6 @@ has(slots::Slots, slot) ::Bool = let
     0x0000 < slots.data & (0x0001<<u16(slot))  
 end
 
-# insert!(self::SortedSlots, slots... ) = let
-#     for slot in slots
-#         mask = 1 << u16(slot)
-#         self.data |= mask # force on
-#     end
-# end
-
 remove(self::Slots, slot_to_remove ) ::Slots = let
     mask = ~( 1 << u16(slot_to_remove) )
     newdata::u16 = self.data & mask # force off
@@ -168,7 +150,7 @@ const UPPER_SCORES = (
     [0,6,12,18,24,30],  # SIXES
 )
 
-""" returns the unique and relevant "upper bonus total" that could have occurred from the previously used upper slots """
+# returns the unique and relevant "upper bonus total" that could have occurred from the previously used upper slots 
 relevant_upper_totals(slots::Slots) :: Vector{u8} = let # TODO switch to this simplified version in the Rust implmentation for fairness?
     totals = Set(u8[])
     used_slots = used_upper_slots(slots)
@@ -504,9 +486,7 @@ function build_cache!(self::App) # = let
                         # built_this_thread = YahtCache() #self.ev_cache #TODO come back to make this actually multithreaded like commented rust code above
 
                         Threads.@threads :static for dieval_combo in dieval_combos
-
                             # println(Threads.threadid() )
-                            
                             process_dieval_combo!(
                                 rolls_remaining, 
                                 slots_len, 
@@ -518,7 +498,6 @@ function build_cache!(self::App) # = let
                                 self,
                                 placeholder_dievals
                             )
-
                         end # for die_combo in die_combos
 
                     end #for each rolls_remaining
@@ -772,34 +751,26 @@ function outcomes_range_for_selection(selection::Selection) #(selection:u9)->&'s
     return range
 end
 
+const OUTCOME_EVS_BUFFER = Array{f32}(undef,1683,Threads.nthreads()) 
+const NEWVALS_DATA_BUFFER = Array{u16}(undef,1683,Threads.nthreads()) 
+const EVS_TIMES_ARRANGEMENTS_BUFFER = Array{f32}(undef,1683,Threads.nthreads())
+const SORTED_DIEVALS = sorted_dievals()
+const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13,19,15,21,24,28,16,22,25,29,26,30,31,32] # julia hand-cobbled mapping
 const SELECTION_RANGES = selection_ranges()  
 const OUTCOMES = Vector{Outcome}(undef,1683) 
 const OUTCOME_DIEVALS_DATA = Vector{u16}(undef,1683) 
 const OUTCOME_MASK_DATA = Vector{u16}(undef,1683) 
 const OUTCOME_ARRANGEMENTS = Vector{f32}(undef,1683) 
 cache_roll_outcomes_data!()
-const OUTCOME_EVS_BUFFER = Array{f32}(undef,1683,Threads.nthreads()) 
-const NEWVALS_DATA_BUFFER = Array{u16}(undef,1683,Threads.nthreads()) 
-const EVS_TIMES_ARRANGEMENTS_BUFFER = Array{f32}(undef,1683,Threads.nthreads())
-const SORTED_DIEVALS = sorted_dievals()
-const RANGE_IDX_FOR_SELECTION = [1,2,3,7,4,8,11,17,5,9,12,20,14,18,23,27,6,10,13,19,15,21,24,28,16,22,25,29,26,30,31,32] # julia hand-cobbled mapping
-# const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,8,7,17,9,10,11,18,12,14,20,27,6,13,19,21,15,22,23,24,16,26,25,28,29,30,31,32] # mapping used in Rust and Python impls after 1-basing
-# const RANGE_IDX_FOR_SELECTION = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32] # straight mapping  #TODO somehow these all work?
 
 function main() 
     
     game = GameState( 
-        # DieVals(1,2,3,5,6),
         DieVals(3,4,4,6,6),
         # DieVals(0),
-        # Slots(0x4, 0x5, 0x6),
         Slots(0x1,0x2,0x8,0x9,0xa,0xb,0xc,0xd),
-        # Slots(0x6),
+        # Slots(0x1,0x2,0x3,0x4,0x8,0x9,0xa,0xb,0xc,0xd),
         # Slots(0x1,0x2,0x3,0x4,0x5,0x6,0x7,0x8,0x9,0xa,0xb,0xc,0xd), # should yield 254.5896
-        # Slots(SIXES,YAHTZEE),
-        # Slots(0x6,0x8,0xc), 
-        # Slots(12),
-        # Slots(0x3, FOURS, FIVES, SIXES, CHANCE, FULL_HOUSE, YAHTZEE, SM_STRAIGHT, LG_STRAIGHT, THREE_OF_A_KIND, FOUR_OF_A_KIND),
         # 0, 3, false
         0, 2, false
     )
@@ -807,18 +778,6 @@ function main()
     build_cache!(app)
     lhs=app.ev_cache[game.id]
     println("\n$(bitstring(lhs.choice))\t$(round(lhs.ev,digits=4))")
-    # InteractiveUtils.@code_llvm avg_ev(
-    #     game.sorted_dievals,
-    #     0b11111,
-    #     game.open_slots,
-    #     game.upper_total,
-    #     game.rolls_remaining,
-    #     game.yahtzee_bonus_avail,
-    #     app.ev_cache 
-    # )
 end
 
-# main()
-
-
-# end # modulne
+# end # module
